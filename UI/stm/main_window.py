@@ -65,6 +65,7 @@ class MainWindow(QMainWindow):
 
         edit_menu = self.menuBar().addMenu("&Edit")
         edit_menu.addAction(self._action("&New record", QKeySequence.StandardKey.New, self._new_record))
+        edit_menu.addAction(self._action("&Delete selected", QKeySequence(Qt.Key.Key_Delete), self._delete_selected))
         edit_menu.addSeparator()
         edit_menu.addAction(self._action("&Filter rows", QKeySequence.StandardKey.Find, self._focus_filter))
 
@@ -123,6 +124,11 @@ class MainWindow(QMainWindow):
         page = self._current_page()
         if page is not None:
             page.new_record()
+
+    def _delete_selected(self) -> None:
+        page = self._current_page()
+        if page is not None:
+            page.delete_selected()
 
     def _focus_filter(self) -> None:
         page = self._current_page()

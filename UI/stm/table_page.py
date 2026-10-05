@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 
 from stm import db
 from stm.db import Database, DbError
+from stm.dialogs import ConfirmDeleteDialog, show_error
 from stm.record_dialog import RecordDialog
 from stm.schema import Row, Style, TableSpec
 from stm.table_model import RecordFilterProxy, RecordModel, StatusChipDelegate
@@ -48,6 +49,9 @@ class TablePage(QWidget):
         self._refresh_button = button("Refresh", tooltip="Reload from the database (F5)")
         self._new_button = button("New", "primary", tooltip=f"Insert a new {spec.singular} (Ctrl+N)")
         self._new_button.setVisible(spec.can_insert)
+        self._delete_button = button("Delete", "danger", tooltip="Delete the selected rows (Del)")
+        self._delete_button.setVisible(not spec.is_view)
+        self._delete_button.setEnabled(False)
         self._action_bar = QHBoxLayout()
 
         self._build_layout()
@@ -97,6 +101,7 @@ class TablePage(QWidget):
 
         self._action_bar.setSpacing(8)
         self._action_bar.addWidget(self._refresh_button)
+        self._action_bar.addWidget(self._delete_button)
         self._action_bar.addWidget(self._new_button)
 
         top = QHBoxLayout()
@@ -136,6 +141,8 @@ class TablePage(QWidget):
     def _wire(self) -> None:
         self._refresh_button.clicked.connect(lambda: self.reload())
         self._new_button.clicked.connect(self.new_record)
+        self._delete_button.clicked.connect(self.delete_selected)
+        self._view.selectionModel().selectionChanged.connect(self._update_actions)
         self._filter.textChanged.connect(self._apply_filter)
         self._filter_column.currentIndexChanged.connect(self._apply_filter)
         clear = QAction(self._filter)
@@ -162,6 +169,7 @@ class TablePage(QWidget):
         if not self._columns_fitted:
             self._fit_columns()
         self._select_keys(keys)
+        self._update_actions()
         self._emit_counts()
         return True
 
@@ -180,6 +188,58 @@ class TablePage(QWidget):
         described = self.spec.describe(row) if row else self.spec.singular
         self.message.emit(f"Inserted {described}.")
         self.data_changed.emit()
+
+    def delete_selected(self) -> None:
+        rows = self.selected_rows()
+        if self.spec.is_view or not rows:
+            return
+        keys = [self.spec.key_of(row) for row in rows]
+        names = [self.spec.describe(row) for row in rows]
+        try:
+            cascades = db.cascade_counts(self._db, self.spec, keys)
+        except DbError:
+            cascades = []
+        confirm = ConfirmDeleteDialog(self.spec, names, cascades, self.window())
+        if confirm.exec() != ConfirmDeleteDialog.DialogCode.Accepted:
+            return
+        anchor = self._first_selected_row()
+        try:
+            deleted = db.delete_rows(self._db, self.spec, keys)
+        except DbError as err:
+            self._report_delete_failure(err, names)
+            return
+        self.reload(select_keys=[])
+        self._select_row(anchor)
+        if deleted == 0:
+            self.message.emit("Nothing was deleted; the rows may already have been removed.")
+        elif len(names) == 1:
+            self.message.emit(f"Deleted {names[0]}.")
+        else:
+            self.message.emit(f"Deleted {deleted:,} rows from {self.spec.name}.")
+        self.data_changed.emit()
+
+    def _report_delete_failure(self, err: DbError, names: list[str]) -> None:
+        name = names[err.row_index] if err.row_index is not None else names[0]
+        detail = err.detail
+        if len(names) > 1:
+            detail += "\nThe transaction was rolled back; no rows were deleted."
+        show_error(self.window(), "Could not delete", f"Could not delete {name}. {err.message}", detail)
+        self.message.emit(f"Delete refused for {name}. {err.message}")
+
+    def _first_selected_row(self) -> int:
+        rows = self._view.selectionModel().selectedRows()
+        return min((index.row() for index in rows), default=0)
+
+    def _select_row(self, row: int) -> None:
+        count = self._proxy.rowCount()
+        if count == 0:
+            return
+        index = self._proxy.index(min(row, count - 1), 0)
+        flags = QItemSelectionModel.SelectionFlag.ClearAndSelect | QItemSelectionModel.SelectionFlag.Rows
+        self._view.selectionModel().setCurrentIndex(index, flags)
+
+    def _update_actions(self) -> None:
+        self._delete_button.setEnabled(bool(self._view.selectionModel().selectedRows()))
 
     def _row_for_key(self, key: tuple[Any, ...]) -> Row | None:
         return next((row for row in self._model.rows() if self.spec.key_of(row) == key), None)

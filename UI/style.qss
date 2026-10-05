@@ -88,6 +88,18 @@ QLabel[role="bannerDetail"] {
     color: #8A5050;
     font-size: 9pt;
 }
+QLabel[role="warning"] {
+    color: #8A5A00;
+}
+QLabel[role="detail"] {
+    color: #6B7680;
+}
+
+QFrame#RecordList {
+    background: #FFFFFF;
+    border: 1px solid #DCE0E4;
+    border-radius: 3px;
+}
 
 QFrame#Hairline {
     background: #DCE0E4;

@@ -50,6 +50,7 @@ class DbError(Exception):
         self.code = code
         self.field = field
         self.detail = detail
+        self.row_index: int | None = None  # which of several rows failed, for batch writes
 
 
 @dataclass(frozen=True)
@@ -398,6 +399,62 @@ def insert_row(db: Database, spec: TableSpec, values: dict[str, Any]) -> tuple[A
     if spec.auto_key:
         return (last_id,)
     return tuple(values[column] for column in spec.primary_key)
+
+
+def delete_rows(db: Database, spec: TableSpec, keys: Sequence[tuple[Any, ...]]) -> int:
+    """Delete rows by primary key in one transaction; all or nothing.
+
+    Returns the number of rows removed. On failure the DbError carries the
+    position of the offending key in ``row_index``.
+    """
+    where = " AND ".join(f"`{column}` = %s" for column in spec.primary_key)
+    sql = f"DELETE FROM `{spec.name}` WHERE {where}"
+    deleted = 0
+    with db.transaction() as tx:
+        for position, key in enumerate(keys):
+            try:
+                rowcount, _ = tx.execute(sql, key)
+            except mysql.connector.Error as err:
+                error = translate_error(err)
+                error.row_index = position
+                raise error from err
+            deleted += rowcount
+    return deleted
+
+
+# Rows that ON DELETE CASCADE removes along with a parent, for the confirm dialog.
+_CASCADE_SQL: dict[str, tuple[tuple[str, str, str], ...]] = {
+    "warehouse": (
+        ("zone", "zones", "SELECT COUNT(*) AS n FROM zone WHERE warehouse_id = %s"),
+        (
+            "bin",
+            "bins",
+            """SELECT COUNT(*) AS n FROM bin b
+               JOIN zone z ON z.zone_id = b.zone_id
+               WHERE z.warehouse_id = %s""",
+        ),
+    ),
+    "zone": (("bin", "bins", "SELECT COUNT(*) AS n FROM bin WHERE zone_id = %s"),),
+    "receipt": (
+        ("receipt line", "receipt lines", "SELECT COUNT(*) AS n FROM receipt_line WHERE receipt_id = %s"),
+    ),
+    "transfer": (
+        ("transfer line", "transfer lines", "SELECT COUNT(*) AS n FROM transfer_line WHERE transfer_id = %s"),
+    ),
+    "dispatch": (
+        ("dispatch line", "dispatch lines", "SELECT COUNT(*) AS n FROM dispatch_line WHERE dispatch_id = %s"),
+    ),
+}
+
+
+def cascade_counts(db: Database, spec: TableSpec, keys: Sequence[tuple[Any, ...]]) -> list[str]:
+    """Describe child rows that would be deleted with these parents, e.g. ['3 zones', '7 bins']."""
+    parts: list[str] = []
+    for singular, plural, sql in _CASCADE_SQL.get(spec.name, ()):
+        total = sum(int(db.query(sql, key)[0]["n"]) for key in keys)
+        if total:
+            parts.append(f"{total:,} {singular if total == 1 else plural}")
+    return parts
 
 
 # --- Error translation -------------------------------------------------------
