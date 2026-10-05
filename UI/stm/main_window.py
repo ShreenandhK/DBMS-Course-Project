@@ -1,10 +1,12 @@
 """Application main window: sidebar navigation, table pages and status bar."""
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QMainWindow, QStackedWidget, QWidget
 
 from stm import APP_NAME, db, schema
+from stm.activity_log import ActivityLog
 from stm.db import Database, DbError
 from stm.sidebar import Sidebar
 from stm.table_page import TablePage
@@ -25,9 +27,13 @@ class MainWindow(QMainWindow):
         self._connection_label = QLabel(f"{database.info.label}   ·   MySQL {database.server_version}")
         self._message_label = QLabel()
         self._count_label = QLabel()
+        self._activity = ActivityLog(self)
+        database.add_listener(self._activity.record)
 
         self._build_central()
         self._build_status_bar()
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._activity)
+        self.resizeDocks([self._activity], [150], Qt.Orientation.Vertical)
         self._build_menu()
         self._sidebar.page_selected.connect(self._open_page)
         self.refresh_counts()
@@ -57,9 +63,17 @@ class MainWindow(QMainWindow):
         file_menu = self.menuBar().addMenu("&File")
         file_menu.addAction(self._action("E&xit", QKeySequence.StandardKey.Quit, self.close))
 
+        edit_menu = self.menuBar().addMenu("&Edit")
+        edit_menu.addAction(self._action("&New record", QKeySequence.StandardKey.New, self._new_record))
+        edit_menu.addSeparator()
+        edit_menu.addAction(self._action("&Filter rows", QKeySequence.StandardKey.Find, self._focus_filter))
+
         view_menu = self.menuBar().addMenu("&View")
         view_menu.addAction(self._action("&Refresh", QKeySequence(QKeySequence.StandardKey.Refresh), self.refresh))
-        view_menu.addAction(self._action("&Filter rows", QKeySequence.StandardKey.Find, self._focus_filter))
+        activity = self._activity.toggleViewAction()
+        activity.setText("SQL &activity")
+        activity.setShortcut(QKeySequence("Ctrl+L"))
+        view_menu.addAction(activity)
 
     def _action(self, text: str, shortcut: QKeySequence | QKeySequence.StandardKey, slot: object) -> QAction:
         action = QAction(text, self)
@@ -79,6 +93,7 @@ class MainWindow(QMainWindow):
         page = TablePage(self._db, schema.BY_NAME[name])
         page.counts_changed.connect(lambda visible, total, p=page: self._show_counts(p, visible, total))
         page.message.connect(self.show_message)
+        page.data_changed.connect(self._after_change)
         self._pages[name] = page
         self._stack.addWidget(page)
         return page
@@ -100,6 +115,14 @@ class MainWindow(QMainWindow):
             self._sidebar.set_counts(db.row_counts(self._db))
         except DbError as err:
             self.show_message(f"Could not read row counts: {err.message}")
+
+    def _after_change(self) -> None:
+        self.refresh_counts()
+
+    def _new_record(self) -> None:
+        page = self._current_page()
+        if page is not None:
+            page.new_record()
 
     def _focus_filter(self) -> None:
         page = self._current_page()

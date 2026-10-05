@@ -156,6 +156,33 @@ QCheckBox {
     spacing: 6px;
 }
 
+QCalendarWidget QWidget#qt_calendar_navigationbar {
+    background: #FFFFFF;
+    border-bottom: 1px solid #E3E6EA;
+}
+QCalendarWidget QToolButton {
+    background: transparent;
+    border: none;
+    border-radius: 3px;
+    color: #1C2127;
+    font-weight: 600;
+    padding: 4px 8px;
+}
+QCalendarWidget QToolButton:hover {
+    background: #EEF0F3;
+}
+QCalendarWidget QAbstractItemView {
+    background: #FFFFFF;
+    selection-background-color: #18607F;
+    selection-color: #FFFFFF;
+    outline: 0;
+}
+QCalendarWidget QSpinBox {
+    border: 1px solid #C4CAD1;
+    border-radius: 3px;
+    padding: 1px 4px;
+}
+
 /* ---- Buttons ---------------------------------------------------------- */
 
 QPushButton {

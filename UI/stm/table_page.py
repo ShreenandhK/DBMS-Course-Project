@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 
 from stm import db
 from stm.db import Database, DbError
+from stm.record_dialog import RecordDialog
 from stm.schema import Row, Style, TableSpec
 from stm.table_model import RecordFilterProxy, RecordModel, StatusChipDelegate
 from stm.widgets import button, label
@@ -30,6 +31,7 @@ ROW_HEIGHT = 28
 class TablePage(QWidget):
     counts_changed = Signal(int, int)  # visible rows, total rows
     message = Signal(str)
+    data_changed = Signal()
 
     def __init__(self, database: Database, spec: TableSpec, parent: Any = None) -> None:
         super().__init__(parent)
@@ -44,6 +46,8 @@ class TablePage(QWidget):
         self._filter_column = QComboBox()
         self._filter = QLineEdit()
         self._refresh_button = button("Refresh", tooltip="Reload from the database (F5)")
+        self._new_button = button("New", "primary", tooltip=f"Insert a new {spec.singular} (Ctrl+N)")
+        self._new_button.setVisible(spec.can_insert)
         self._action_bar = QHBoxLayout()
 
         self._build_layout()
@@ -93,6 +97,7 @@ class TablePage(QWidget):
 
         self._action_bar.setSpacing(8)
         self._action_bar.addWidget(self._refresh_button)
+        self._action_bar.addWidget(self._new_button)
 
         top = QHBoxLayout()
         top.addLayout(titles)
@@ -130,6 +135,7 @@ class TablePage(QWidget):
 
     def _wire(self) -> None:
         self._refresh_button.clicked.connect(lambda: self.reload())
+        self._new_button.clicked.connect(self.new_record)
         self._filter.textChanged.connect(self._apply_filter)
         self._filter_column.currentIndexChanged.connect(self._apply_filter)
         clear = QAction(self._filter)
@@ -158,6 +164,25 @@ class TablePage(QWidget):
         self._select_keys(keys)
         self._emit_counts()
         return True
+
+    def new_record(self) -> None:
+        if not self.spec.can_insert:
+            return
+        dialog = RecordDialog(self._db, self.spec, self.window())
+        if dialog.exec() != RecordDialog.DialogCode.Accepted or dialog.inserted_key is None:
+            return
+        key = dialog.inserted_key
+        self.reload(select_keys=[key])
+        if not self.selected_keys():
+            self._filter.clear()
+            self._select_keys([key])
+        row = self._row_for_key(key)
+        described = self.spec.describe(row) if row else self.spec.singular
+        self.message.emit(f"Inserted {described}.")
+        self.data_changed.emit()
+
+    def _row_for_key(self, key: tuple[Any, ...]) -> Row | None:
+        return next((row for row in self._model.rows() if self.spec.key_of(row) == key), None)
 
     def focus_filter(self) -> None:
         self._filter.setFocus()

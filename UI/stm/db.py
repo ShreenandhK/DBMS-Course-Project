@@ -17,7 +17,7 @@ from typing import Any
 import mysql.connector
 from mysql.connector import errorcode
 
-Row = dict[str, Any]
+from stm.schema import Row, TableSpec
 
 CONNECT_TIMEOUT_SECONDS = 10
 
@@ -315,6 +315,91 @@ def row_counts(db: Database) -> dict[str, int]:
     return {name: int(count) for name, count in rows[0].items()}
 
 
+# --- Dropdown lookups --------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Option:
+    """One choice in a foreign-key dropdown. ``data`` carries extra columns."""
+
+    id: int
+    label: str
+    data: Row = field(default_factory=dict, compare=False)
+
+
+_LOOKUP_SQL: dict[str, str] = {
+    "supplier": "SELECT supplier_id AS id, name FROM supplier ORDER BY name",
+    "warehouse": "SELECT warehouse_id AS id, name FROM warehouse ORDER BY name",
+    "product": "SELECT product_id AS id, sku, name FROM product ORDER BY sku",
+    "zone": """
+        SELECT z.zone_id AS id, z.zone_name, z.warehouse_id, w.name AS warehouse_name
+        FROM zone z
+        JOIN warehouse w ON w.warehouse_id = z.warehouse_id
+        ORDER BY w.name, z.zone_name""",
+    "bin": """
+        SELECT b.bin_id AS id, b.bin_code, z.zone_name, z.warehouse_id, w.name AS warehouse_name
+        FROM bin b
+        JOIN zone z ON z.zone_id = b.zone_id
+        JOIN warehouse w ON w.warehouse_id = z.warehouse_id
+        ORDER BY b.bin_code""",
+    "receipt": """
+        SELECT r.receipt_id AS id, r.receipt_date, r.warehouse_id,
+               s.name AS supplier_name, w.name AS warehouse_name
+        FROM receipt r
+        JOIN supplier s ON s.supplier_id = r.supplier_id
+        JOIN warehouse w ON w.warehouse_id = r.warehouse_id
+        ORDER BY r.receipt_id DESC""",
+    "transfer": """
+        SELECT t.transfer_id AS id, t.status, t.source_warehouse_id, t.dest_warehouse_id,
+               sw.name AS source_warehouse, dw.name AS dest_warehouse
+        FROM transfer t
+        JOIN warehouse sw ON sw.warehouse_id = t.source_warehouse_id
+        JOIN warehouse dw ON dw.warehouse_id = t.dest_warehouse_id
+        ORDER BY t.transfer_id DESC""",
+    "dispatch": """
+        SELECT d.dispatch_id AS id, d.dispatch_date, d.destination, d.warehouse_id,
+               w.name AS warehouse_name
+        FROM dispatch d
+        JOIN warehouse w ON w.warehouse_id = d.warehouse_id
+        ORDER BY d.dispatch_id DESC""",
+}
+
+_LOOKUP_LABELS: dict[str, Callable[[Row], str]] = {
+    "supplier": lambda r: r["name"],
+    "warehouse": lambda r: r["name"],
+    "product": lambda r: f"{r['sku']}   {r['name']}",
+    "zone": lambda r: f"{r['warehouse_name']} / {r['zone_name']}",
+    "bin": lambda r: f"{r['bin_code']}   {r['warehouse_name']} / {r['zone_name']}",
+    "receipt": lambda r: f"#{r['id']}   {r['receipt_date']}   {r['supplier_name']} → {r['warehouse_name']}",
+    "transfer": lambda r: f"#{r['id']}   {r['status']}   {r['source_warehouse']} → {r['dest_warehouse']}",
+    "dispatch": lambda r: f"#{r['id']}   {r['dispatch_date']}   {r['warehouse_name']} → {r['destination']}",
+}
+
+
+def lookup(db: Database, name: str) -> list[Option]:
+    label = _LOOKUP_LABELS[name]
+    return [Option(int(row["id"]), label(row), row) for row in db.query(_LOOKUP_SQL[name])]
+
+
+# --- Writes ------------------------------------------------------------------
+
+
+def insert_row(db: Database, spec: TableSpec, values: dict[str, Any]) -> tuple[Any, ...]:
+    """Insert one row in its own transaction and return its primary key."""
+    allowed = {f.column for f in spec.fields}
+    columns = [column for column in values if column in allowed]
+    if len(columns) != len(values):
+        raise ValueError(f"Unknown column for {spec.name}: {set(values) - allowed}")
+    column_list = ", ".join(f"`{column}`" for column in columns)
+    placeholders = ", ".join(["%s"] * len(columns))
+    sql = f"INSERT INTO `{spec.name}` ({column_list}) VALUES ({placeholders})"
+    with db.transaction() as tx:
+        _, last_id = tx.execute(sql, [values[column] for column in columns])
+    if spec.auto_key:
+        return (last_id,)
+    return tuple(values[column] for column in spec.primary_key)
+
+
 # --- Error translation -------------------------------------------------------
 
 _TABLE_NOUNS: dict[str, tuple[str, str]] = {
@@ -383,6 +468,7 @@ def translate_error(err: mysql.connector.Error) -> DbError:
             column, message = _lookup(_CHECKS, r"constraint '(\w+)'", raw, "A data rule was violated.")
         case errorcode.ER_SIGNAL_EXCEPTION:
             column, message = None, raw
+            detail = f"MySQL {code}: rejected by a trigger (SQLSTATE 45000)"
         case errorcode.ER_BAD_NULL_ERROR:
             column, message = _column(raw), "This field is required."
         case errorcode.ER_DATA_TOO_LONG:
