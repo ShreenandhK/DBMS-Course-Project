@@ -1,245 +1,308 @@
-# Stock Transfer Manager
+# Stock Transfer Manager — Technical Documentation
 
 Desktop client for the `stock_transfer_db` MySQL database (Multi-Warehouse Stock Transfer
-Management System). It lists every table and the `v_bin_stock` view, inserts and deletes rows
-through generated forms, and shows every write statement it sends to the server.
+Management System). It provides read access to all 12 tables and the `v_bin_stock` view,
+schema-driven insert and delete, transactional stock workflows, application-level business rules
+that the schema does not enforce, analytical reports and CSV export.
 
-Built with Python 3, PySide6 (Qt 6) and mysql-connector-python.
+| | |
+|---|---|
+| Language | Python 3.12+ (developed and tested on 3.14) |
+| UI toolkit | PySide6-Essentials 6.11.2 (Qt 6), Fusion style |
+| Database driver | mysql-connector-python 26.7.0 (C extension) |
+| Credential storage | keyring 25.7.0 (Windows Credential Manager backend) |
+| Database | MySQL Community Server 8.0, schema `stock_transfer_db` (`../stock_transfer_db.sql`) |
+| Platform | Windows 10/11 |
 
-## Requirements
+## 1. Setup and run
 
-- Windows 10 or 11
-- Python 3.12 or newer (developed on 3.14)
-- MySQL Server 8.0 with `stock_transfer_db` loaded from `../stock_transfer_db.sql`
+Create the virtual environment and install the pinned dependencies (PowerShell, repository root):
 
-## Setup
-
-From the repository root:
-
-```bash
-cd UI
-py -3 -m venv venv
-venv\Scripts\python -m pip install -r requirements.txt
+```powershell
+py -3 -m venv UI\venv
+.\UI\venv\Scripts\python.exe -m pip install -r UI\requirements.txt
 ```
 
-## Run
+Run from the repository root:
 
-```bash
-venv\Scripts\python main.py
+```powershell
+.\UI\venv\Scripts\python.exe .\UI\main.py
 ```
 
-The login dialog is prefilled with `localhost`, `3306`, `root` and `stock_transfer_db`. Enter the
-MySQL password and press **Connect**. A failed connection shows the reason (wrong password,
-server not running, unknown database) and keeps the dialog open.
+or from inside `UI`:
 
-**Remember password on this computer** stores the password in Windows Credential Manager as the
-generic credential `StockTransferManager`. Host, port, user and database are saved under
-`HKEY_CURRENT_USER\Software\StockTransfer`. Nothing is written inside the project folder. To
-forget the password, untick the box and connect once, or remove the credential in Credential
-Manager.
+```powershell
+.\venv\Scripts\python.exe .\main.py
+```
 
-## Using the app
+`main.py` resolves the stylesheet and assets relative to its own location, so the working
+directory does not matter; only the script path must be correct.
 
-| Area | What it does |
-|---|---|
-| Sidebar | Operations (workflows), then all 12 tables and the **Bin stock** view, grouped by area, with live row counts |
-| Grid | Click a header to sort (third click restores database order). Foreign keys show names, codes and SKUs instead of IDs |
-| Filter | Text filter over all columns or one chosen column; the status bar shows `visible of total` rows |
-| New | Form generated from the table definition. Foreign keys are dropdowns; inputs are checked before anything is sent |
-| Delete | Deletes the selected rows in one transaction after a confirmation that names each record and lists cascaded child rows |
-| SQL activity | Bottom panel listing each `START TRANSACTION`, `INSERT`/`UPDATE`/`DELETE` with its values, rows affected, and `COMMIT`/`ROLLBACK` |
-| Export CSV | Saves the rows currently shown (after filter and sort) of any table or report as a CSV file (UTF-8, opens in Excel) |
+`requirements.txt` pins every package, including transitive dependencies, to the versions above.
 
-Reads run in autocommit mode, so **Refresh** always shows changes made from other clients such
-as the MySQL command line.
+## 2. Architecture
 
-### Operations (workflows)
+```
+main.py ── LoginDialog ── credentials.py (Credential Manager, QSettings)
+   │
+MainWindow ── Sidebar · ActivityLog · status bar · menus/shortcuts
+   │  pages (Page subclasses, created lazily, refreshed on every activation)
+   ├── TablePage ×13 ── RecordDialog (insert) · ConfirmDeleteDialog
+   ├── workflows/ ×6  ── receive · new transfer · process transfers · dispatch · damage · bin search
+   └── ReportsPage    ── 6 report grids · CSV export
+          │                                   │
+   operations.py (workflows, business rules)  schema.py / reports.py (metadata)
+          │                                   │
+        db.py (every SQL statement, connection, transactions, error translation)
+          │
+   mysql-connector-python ── MySQL 8.0 · stock_transfer_db
+```
 
-| Page | What it writes |
-|---|---|
-| Receive stock | One `receipt` and its `receipt_line` rows (put-away into bins of the receiving warehouse), in one transaction |
-| New transfer | A PENDING `transfer` and its `transfer_line` rows, picked from stock in the source warehouse |
-| Process transfers | Mark in transit (`status` → IN_TRANSIT), save put-away bins (`dest_bin_id`), confirm (bins + `status` → CONFIRMED in one transaction) or cancel |
-| Dispatch stock | One `dispatch` and its `dispatch_line` rows, picked from stock in that warehouse |
-| Record damage | One `damaged` row; the units leave usable stock |
-| Bin search | Read only: bins and their contents by bin code, zone, SKU or product, with reserved and available quantities |
+### Layering rules
 
-### Business rules checked by the application
-
-The database enforces keys, foreign keys, CHECK constraints and the confirmation triggers. These
-rules are not in the schema, so the application checks them before writing (in the workflows and
-in the insert forms of the table pages):
-
-| Rule | Example message |
-|---|---|
-| A bin on a receipt, transfer or dispatch belongs to that document's warehouse (destination bins to the destination warehouse) | "Bin HYD-BS-01 belongs to Hyderabad Central DC, not Pune West Depot." |
-| Transfer and dispatch quantities fit the bin's stock, minus stock reserved by PENDING transfers | "Only 438 of PLB-PVC-025 available in BLR-BS-01 (588 on hand, 150 reserved by pending transfers); 500 requested." |
-| Damage quantity fits the bin's stock | "Only 110 of PNT-WHT-020 on hand in PUN-BS-01; 500 requested." |
-| Transfers only move forward: PENDING → IN_TRANSIT → CONFIRMED, or to CANCELLED; CONFIRMED and CANCELLED are final | "Transfer #1 is CONFIRMED; it cannot change to PENDING. Allowed: none (final state)." |
-| Every line has a destination bin before confirming | "Every line needs a destination bin before the transfer can be confirmed." |
-
-Status changes use `UPDATE transfer SET status = ? WHERE transfer_id = ? AND status = ?`, so a
-transfer changed by someone else in the meantime is reported instead of overwritten.
-
-### Reports
-
-**Operations → Reports** runs read-only queries (joins, subqueries, aggregation over `v_bin_stock`)
-each time a tab is opened or F5 is pressed. Every report can be filtered and exported to CSV.
-
-| Report | What it shows |
-|---|---|
-| Warehouse stock | Units on hand per warehouse and product, bins used, reserved by PENDING transfers, available |
-| Pending and in transit | Transfer lines not yet confirmed, with age in days; IN_TRANSIT units are in no bin |
-| Bin utilization | Bins per zone, occupied versus empty, occupied % (bins have no capacity column) |
-| Stock ageing | Days since the first inbound movement (receipt or confirmed transfer) into each stocked bin, in 30-day bands |
-| Damaged stock | Damage incidents and units per warehouse and product, as a % of units received into that warehouse |
-| Reorder needs | Company-wide stock (on hand plus in transit) against each product's reorder level, with the shortfall |
-
-### Keyboard
-
-| Key | Action |
-|---|---|
-| Ctrl+N | New record on the current table |
-| Del | Delete selected rows |
-| Ctrl+F | Focus the filter box (Esc clears it) |
-| F5 | Reload the current page (or re-run the report) and the sidebar counts |
-| Ctrl+E | Export the rows shown to CSV |
-| Ctrl+L | Show or hide the SQL activity panel |
-
-### Database errors
-
-| MySQL error | Cause | What the app shows |
+| Module | May contain | Must not contain |
 |---|---|---|
-| 1062 | Duplicate unique or primary key | Message under the field, e.g. "A supplier with this name already exists." |
-| 1451 | Deleting a row that other rows reference | "Could not delete supplier “…”. It is still referenced by receipts. Delete those receipts first." |
-| 1452 | Referenced parent row is missing | "The selected warehouse no longer exists. Refresh and try again." |
-| 3819 | CHECK constraint violated | The rule in plain words, e.g. "Source and destination warehouse must be different." |
-| 1644 | Trigger rejected the change | The trigger's own message, e.g. "Lines on a CONFIRMED transfer must have a dest_bin_id" |
+| `db.py` | All SQL text, connection handling, transactions, MySQL error translation | Qt widgets, business rules |
+| `schema.py`, `reports.py` | Table/report metadata: columns, form fields, keys, display formats | SQL, Qt |
+| `operations.py` | Business rules and multi-statement workflows built on `db.py` functions | SQL, Qt |
+| Widgets (`*_page.py`, `workflows/`, dialogs) | Layout and interaction; call `db` read functions and `operations`/`db` write functions | SQL |
 
-The raw MySQL text, including the constraint name, is shown underneath and in the SQL activity
-panel.
+Identifiers that cannot be bound as parameters (table and column names in generic INSERT/DELETE)
+come only from the `TableSpec` definitions in `schema.py`; `db.insert_values` rejects any column
+not declared as a form field of that table.
 
-## Project layout
+### Module reference
 
+| Module | Responsibility |
+|---|---|
+| `main.py` | Creates `QApplication` (Fusion, forced light palette, application font, stylesheet), runs the login dialog, opens the main window maximized |
+| `stm/db.py` | `Database` (single connection), `Transaction`, statement listeners, list/lookup/count queries, stock queries, report queries, generic insert/delete, transfer updates, error translation |
+| `stm/schema.py` | `TableSpec` per table: grid columns (`GridColumn`, `Style`), insert fields (`Field`, `Kind`), primary key, record description, distinct-value rules |
+| `stm/operations.py` | Business rules (`check_insert`, `check_stock`, `check_bin_in_warehouse`, `check_transition`) and workflows (`receive`, `create_transfer`, `ship_transfer`, `save_putaway`, `confirm_transfer`, `cancel_transfer`, `dispatch`, `record_damage`) |
+| `stm/reports.py` | `ReportSpec` per report: columns, row key, summary line |
+| `stm/credentials.py` | Load/save connection settings and the optional remembered password |
+| `stm/login_dialog.py` | Connection dialog; stays open with a translated message on failure |
+| `stm/main_window.py` | Page registry, sidebar, splitter with the SQL activity panel, menus, shortcuts, status bar |
+| `stm/page.py` | `Page` base class (hooks: `activate`, `refresh`, `new_record`, `delete_selected`, `focus_filter`, `export_csv`) and the shared page header |
+| `stm/table_page.py` | Grid, filter, insert, delete, export for one table or the view |
+| `stm/grid.py` | `DataGrid`: read-only `QTableView` over row dicts with sorting, filtering, selection by key, column fitting, column totals |
+| `stm/table_model.py` | `RecordModel` (display/sort/alignment/font roles), `RecordFilterProxy`, `StatusChipDelegate` |
+| `stm/record_dialog.py` | Insert form generated from `Field` definitions, client validation, rule and database error placement |
+| `stm/dialogs.py` | Delete confirmation (with cascade preview), question and error dialogs |
+| `stm/workflows/` | Workflow pages and their shared building blocks (`WorkflowPage`, `FormGrid`, `LineEditor`) |
+| `stm/reports_page.py` | Tabbed report page |
+| `stm/export.py` | CSV writer and save dialog |
+| `stm/activity_log.py` | Panel that renders `StatementRecord`s |
+| `stm/sidebar.py` | Grouped navigation list with painted row counts |
+| `stm/theme.py`, `style.qss` | Fonts, painted colours, the single application stylesheet |
+
+## 3. Data access
+
+### Connection
+
+One `mysql.connector` connection per session, opened with `autocommit=True`, `utf8mb4` /
+`utf8mb4_0900_ai_ci` and a 10-second connection timeout. Autocommit makes every read see the
+latest committed data, so a refresh reflects changes made by other clients (for example the
+MySQL command line). Before each operation the connection is checked with `is_connected()` and,
+if the server dropped it, re-established (up to two attempts).
+
+Rows are fetched as dictionaries. `DECIMAL` results of `SUM()` over `INT` columns are normalised
+to `int`, so quantities format and sort as integers.
+
+### Transactions
+
+All writes go through `Database.transaction()`:
+
+```python
+with database.transaction() as tx:      # START TRANSACTION
+    tx.execute(sql, params)             # one or more statements
+                                        # COMMIT on normal exit, ROLLBACK on any exception
 ```
-UI/
-├── main.py              entry point: application setup, login, main window
-├── requirements.txt     pinned dependencies
-├── style.qss            the single application stylesheet
-├── assets/              monochrome UI glyphs
-└── stm/
-    ├── db.py            connection, every SQL statement, transactions, error translation
-    ├── schema.py        table definitions: grid columns, form fields, keys (no SQL)
-    ├── operations.py    workflows and the business rules the schema does not enforce (no SQL)
-    ├── credentials.py   remembered login (Credential Manager + registry)
-    ├── login_dialog.py  startup connection dialog
-    ├── main_window.py   sidebar, pages, menus, shortcuts, status bar
-    ├── sidebar.py       grouped navigation with row counts
-    ├── page.py          base class and header shared by all pages
-    ├── table_page.py    grid, filter, New / Delete / Refresh for one table
-    ├── grid.py          sortable, filterable data grid
-    ├── table_model.py   grid model, sort/filter proxy, status chips
-    ├── record_dialog.py generated insert form with inline validation
-    ├── reports.py       report definitions: columns, keys, summary lines (no SQL)
-    ├── reports_page.py  tabbed reports page
-    ├── export.py        CSV export
-    ├── dialogs.py       confirmation and error dialogs
-    ├── activity_log.py  SQL activity panel
-    ├── widgets.py       small shared widget helpers
-    ├── theme.py         fonts and painted colours
-    └── workflows/       receive, new transfer, process transfers, dispatch, damage, bin search
-```
 
-## Demo script
+`Transaction.execute` returns `(rowcount, lastrowid)`. Every statement, its bound values, its
+row count or error, and the surrounding `START TRANSACTION` / `COMMIT` / `ROLLBACK` are emitted
+as `StatementRecord`s to registered listeners; the SQL activity panel is one such listener.
 
-Total time about five minutes. Before starting, make sure the `MySQL80` service is running and
-open a MySQL prompt next to the app to show each change at the database level:
+| Operation | Statements, executed in one transaction |
+|---|---|
+| Insert (table page) | `INSERT INTO <table> (<declared columns>) VALUES (%s, …)` |
+| Delete (table page) | `DELETE FROM <table> WHERE <pk1> = %s AND …`, once per selected row; all or nothing |
+| Receive stock | `INSERT receipt`; `INSERT receipt_line` × n |
+| New transfer | `INSERT transfer` (status `PENDING`); `INSERT transfer_line` × n |
+| Save put-away bins | `UPDATE transfer_line SET dest_bin_id = %s WHERE <pk>` × n |
+| Mark in transit | `UPDATE transfer SET status = 'IN_TRANSIT' WHERE transfer_id = %s AND status = 'PENDING'` |
+| Confirm transfer | `UPDATE transfer_line SET dest_bin_id …` × n; `UPDATE transfer SET status = 'CONFIRMED' WHERE transfer_id = %s AND status = <current>` |
+| Cancel transfer | `UPDATE transfer SET status = 'CANCELLED' WHERE transfer_id = %s AND status = <current>` |
+| Dispatch stock | `INSERT dispatch`; `INSERT dispatch_line` × n |
+| Record damage | `INSERT damaged` |
 
-```bash
-mysql --login-path=local stock_transfer_db
-```
+Status updates are conditional on the status the user saw (`AND status = <current>`). A row count
+of 0 means another session changed the transfer; the transaction is rolled back and the user is
+told to refresh. This gives optimistic concurrency without row locks held across user think-time.
 
-(or `mysql -u root -p stock_transfer_db`).
+### Read queries
 
-### 1. View records
+| Function | Purpose and technique |
+|---|---|
+| `list_rows` | One query per table; joins replace foreign-key IDs with names (warehouse, zone, bin code, SKU); `transfer_line` joins `bin` twice (`LEFT JOIN` for the nullable destination) |
+| `row_counts` | One statement of scalar subqueries: `COUNT(*)` per table, the view, and open transfers |
+| `lookup` | Dropdown options per foreign key; labels formatted in Python; extra columns (for example a bin's `warehouse_id`) kept for filtering |
+| `stock_position` | On hand for one bin/product from `v_bin_stock`, and quantity reserved by `PENDING` transfers (optionally excluding one transfer) |
+| `stock_in_warehouse` | Bin/product balances in a warehouse joined to a derived table of reservations; source for pick lists |
+| `open_transfers` | `PENDING`/`IN_TRANSIT` transfers with line count, units and lines without a destination bin (`GROUP BY` with conditional `SUM`) |
+| `search_bins` | `bin ⨝ zone ⨝ warehouse` `LEFT JOIN v_bin_stock` and reservations; `LIKE` patterns built from escaped user input |
+| `run_report` | The six report queries (section 6) |
 
-1. Start the app and press **Connect**. It opens on **Bin stock** (view `v_bin_stock`):
-   5 rows, **On hand total 3,324**. Each balance is derived from receipts, transfers, dispatches
-   and damage; there is no stock table.
-2. Click **Transfers**. Point out the status labels: CONFIRMED, IN_TRANSIT, PENDING.
-3. Press **Ctrl+F**, type `pune`. The grid shows 2 of 3 rows and the status bar reads
-   `2 of 3 rows`. Press **Esc**.
-4. Click **Bins**. Each bin shows its zone and warehouse by name (joined through `zone`), not by ID.
-   Click the **Bin code** header to sort.
+All values are bound with `%s` placeholders. User text used in `LIKE` has `\`, `%` and `_`
+escaped before it is bound.
 
-### 2. Insert
+## 4. Error handling
 
-1. Click **Suppliers**: 4 rows.
-   Before, in MySQL: `SELECT * FROM supplier;` returns 4 rows.
-2. Press **Ctrl+N**. Enter Name `Shakti Hardware Pvt Ltd`, Contact `+91 44 2345 6789`.
-   Press **Insert**.
-3. After: the new row (ID 5) is selected, the sidebar count changes from 4 to 5, the status bar
-   reads `Inserted supplier “Shakti Hardware Pvt Ltd”.` and the SQL activity panel shows
-   `START TRANSACTION`, the `INSERT` with its values, `1 row affected`, `COMMIT`.
-   In MySQL: `SELECT * FROM supplier;` returns 5 rows.
-4. Insert that changes stock: click **Receipt lines**, press **Ctrl+N** and choose
-   Receipt `#3 … Kaveri Paints Co. → Pune West Depot`, Bin `PUN-BS-02`,
-   Product `PNT-WHT-020  Wall Paint 20L White`, Quantity `50`. Press **Insert**.
-   Click **Bin stock**: a new row for PUN-BS-02 with 50 on hand; 6 rows, total 3,374.
-   In MySQL: `SELECT bin_code, sku, on_hand FROM v_bin_stock;`
-5. Constraints (optional):
-   - Suppliers → **Ctrl+N** → Name `Deccan Electricals Pvt Ltd` → Insert: "A supplier with this
-     name already exists." under Name (1062).
-   - Transfers → **Ctrl+N** → same warehouse in From and To → Insert: blocked with "Source and
-     destination warehouse must be different." (mirrors CHECK `chk_transfer_diff_warehouse`).
-   - Transfer lines → **Ctrl+N** → Transfer `#1 CONFIRMED`, Source bin `HYD-BS-02`,
-     Product `ELE-SWT-006`, Quantity `5`, no destination bin → Insert: the trigger
-     `trg_transfer_line_dest_bi` rejects it (1644).
+`translate_error` converts `mysql.connector.Error` into `DbError(message, code, field, detail)`.
+`field` names the form column the error belongs to, so forms show the message under the right
+input; `detail` keeps the raw server text, which also appears in the SQL activity panel.
 
-### 3. Delete
+| MySQL error | Translation | Source of the mapping |
+|---|---|---|
+| 1062 duplicate key | Plain sentence per unique/primary key, attached to the relevant field | `_UNIQUE_KEYS`, keyed by `table.key` as reported by MySQL 8 (e.g. `supplier.uq_supplier_name`) |
+| 1451 row is referenced | "It is still referenced by receipts. Delete those receipts first." | Child table parsed from the constraint text, mapped to a plural noun |
+| 1452 parent missing | "The selected warehouse no longer exists. Refresh and try again." attached to the FK column | FK column and parent table parsed from the constraint text |
+| 3819 CHECK violated | The rule in plain words, attached to the field (e.g. `chk_transfer_diff_warehouse` → destination warehouse) | `_CHECKS`, one entry per CHECK constraint in the schema |
+| 1644 trigger SIGNAL | The trigger's `MESSAGE_TEXT` unchanged | Raw message |
+| 1048 / 1406 / 1264 / 1366 | Required / too long / out of range, attached to the column | Column parsed from the message |
+| 2006 / 2013 | "Lost the connection to the database server." | — |
 
-1. Click **Receipt lines**, select the row `3 · PUN-BS-02 · PNT-WHT-020 · 50`, press **Del**.
-   The dialog names the record. Press **Delete**. Click **Bin stock**: back to 5 rows, 3,324.
-2. Click **Suppliers**, select `Shakti Hardware Pvt Ltd`, press **Del**, then **Delete**.
-   The count goes from 5 back to 4. In MySQL: `SELECT * FROM supplier;` returns 4 rows.
-3. Refused delete: select `Deccan Electricals Pvt Ltd`, press **Del**, then **Delete**.
-   The app shows "It is still referenced by receipts" (1451, constraint `fk_receipt_supplier`).
-   The SQL panel shows the `DELETE` followed by `ROLLBACK`, and the row stays.
-4. Cascade preview (optional): click **Warehouses**, select `Hyderabad Central DC`, press
-   **Del**. The dialog says it also deletes 3 zones and 7 bins (ON DELETE CASCADE). Press
-   **Cancel**.
+For multi-row deletes the error also carries `row_index`, so the message names the record that
+was refused; the whole transaction is rolled back.
 
-### 4. Workflows (optional, if time allows)
+Connection failures in the login dialog are translated separately (1045 access denied, 1044 no
+database access, 1049 unknown database, 2002/2003 server unreachable, 2005 unknown host).
 
-1. **Bin search**: type `pvc`. BLR-BS-01 shows 588 on hand, 150 reserved (pending transfer #3),
-   438 available.
-2. **New transfer**: From `Hyderabad Central DC`, To `Bengaluru East Hub`. Pick
-   `HYD-BS-01  ELE-LED-009 … 726 available`, Quantity `800`, **Add line**: refused, only 726
-   available. Change to `100`, **Add line**, **Create transfer**. The status bar reads
-   `Created transfer #4 (PENDING) …`.
-3. **Process transfers**: select transfer 4. **Confirm receipt** with no destination bin is
-   refused. **Mark in transit**: Bin stock now shows HYD-BS-01 at 626 (the 100 units are in no
-   bin). Select transfer 4 again, choose destination `BLR-BS-03`, **Confirm receipt**: Bin stock
-   shows BLR-BS-03 with 100. The SQL panel shows the `UPDATE transfer_line` and
-   `UPDATE transfer ... WHERE ... AND status = 'IN_TRANSIT'` in one transaction.
-4. To undo: **Transfers** → select transfer 4 → **Del** → **Delete** (its line is removed by
-   ON DELETE CASCADE), then reset the counter as below.
+## 5. Stock model and business rules
 
-### 5. Reports (optional)
+### Stock quantities
 
-1. Click **Reports**. **Warehouse stock** totals 3,324 on hand, 150 reserved, 3,174 available.
-2. Click **Reorder needs**: 3 products below reorder level (Copper Wire, Ceiling Fan, Cordless
-   Drill), shortfall 115 units. Modular Switch counts its 500 in-transit units.
-3. Click **Bin utilization**: 5 of 17 bins occupied (29.4%).
-4. Press **Ctrl+E** and save the CSV; open it in Excel to show the same rows.
+There is no balance table. Quantities are derived:
 
-### After the demo
+| Quantity | Definition |
+|---|---|
+| On hand | `v_bin_stock.on_hand` = received + confirmed transfers in − (in-transit and confirmed) transfers out − dispatched − damaged |
+| Reserved | Sum of `transfer_line.quantity` on `PENDING` transfers from that source bin and product; still counted in on hand |
+| Available | On hand − reserved |
+| In transit | Lines of `IN_TRANSIT` transfers; counted in no bin |
 
-InnoDB never reuses an auto-increment value, so after inserting and deleting the supplier the
-next new supplier would get ID 6. To put the counters back to their previous values (each only
-takes effect if no higher ID exists):
+### Rules enforced by the application
 
-```sql
-ALTER TABLE supplier AUTO_INCREMENT = 5;
-ALTER TABLE transfer AUTO_INCREMENT = 4;
-```
+These rules are listed as not enforced by the schema (knowledge file, section 7).
+`operations.py` checks them in the workflows and, through `check_insert`, in the generic insert
+forms of the line tables.
+
+| Rule | Applies to | Check |
+|---|---|---|
+| Bin belongs to the document's warehouse | receipt lines, dispatch lines, transfer source bins; destination bins against the destination warehouse | `bin ⨝ zone` warehouse compared with the header's warehouse |
+| Quantity within available stock | transfers, dispatches | Sum of requested quantity per bin/product (lines are aggregated) ≤ on hand − reserved |
+| Quantity within on-hand stock | damage | Requested ≤ on hand |
+| Forward-only status | transfers | Allowed transitions below; `CONFIRMED` and `CANCELLED` are final |
+| Destination bins before confirming | transfers | Every line has a `dest_bin_id`; also enforced in the database by `trg_transfer_confirm_bu` |
+| Destination bin ≠ source bin | transfers | Also enforced in the database by `chk_transfer_line_bins` |
+
+Transfer state machine (`operations.ALLOWED_TRANSITIONS`):
+
+| From | Allowed to |
+|---|---|
+| PENDING | IN_TRANSIT, CONFIRMED, CANCELLED |
+| IN_TRANSIT | CONFIRMED, CANCELLED |
+| CONFIRMED | — |
+| CANCELLED | — |
+
+When a transfer leaves `PENDING` (ship or confirm), its own lines are excluded from the reservation
+total and the stock is re-checked, because other movements may have happened since it was created.
+
+Rule violations raise `RuleError(message, field, line)`; the UI places the message on the field
+or highlights the offending line. Checks run immediately before the write transaction; the write
+itself is atomic.
+
+## 6. Reports
+
+Each report is a single read-only query in `db._REPORT_SQL` with a matching `ReportSpec` in
+`reports.py`. Reports are re-run when their tab is opened and on F5.
+
+| Report | Query outline |
+|---|---|
+| Warehouse stock | `v_bin_stock` `LEFT JOIN` reservations derived table; `GROUP BY` warehouse, product; on hand, reserved, available |
+| Pending and in transit | `transfer ⨝ transfer_line ⨝ warehouse ×2 ⨝ bin` (`LEFT JOIN` destination bin) for `PENDING`/`IN_TRANSIT`; age = `DATEDIFF(CURDATE(), transfer_date)` |
+| Bin utilization | `bin ⨝ zone ⨝ warehouse` `LEFT JOIN` a derived table of bins with `SUM(on_hand) > 0`; per zone: bins, occupied, empty, occupied % (no capacity column exists) |
+| Stock ageing | Inbound movements (`receipt_line ⨝ receipt` `UNION ALL` confirmed `transfer_line`) aggregated to first/last inbound date per bin/product, joined to stocked rows of `v_bin_stock`; age bands via `CASE` |
+| Damaged stock | `damaged ⨝ bin ⨝ zone ⨝ warehouse ⨝ product` grouped by warehouse and product; `GROUP_CONCAT` of bins; damage % against inbound units from `v_bin_stock` |
+| Reorder needs | `product` `LEFT JOIN` on-hand totals and in-transit totals; shortfall = `GREATEST(reorder_level − total, 0)`; status `REORDER`/`OK` |
+
+All queries are valid under `ONLY_FULL_GROUP_BY`. CSV export (`export.write_csv`) writes the rows
+currently visible in the grid, in display order, with raw values (unformatted numbers, ISO dates),
+encoded as UTF-8 with BOM for spreadsheet compatibility.
+
+## 7. User interface implementation
+
+- **Pages.** `MainWindow` keeps a registry of page factories keyed by sidebar entry (workflow keys
+  and table names). Pages are created on first use and `activate()` is called on every visit, so
+  data is never stale after changes made elsewhere. `data_changed` from any page refreshes the
+  sidebar counts.
+- **Grids.** `DataGrid` wraps `RecordModel` + `RecordFilterProxy`. The model returns formatted
+  text for `DisplayRole` and raw values for a custom sort role, so numbers and dates sort
+  correctly; alignment and monospace font are driven by the column `Style`. The proxy filters with
+  an escaped, case-insensitive regular expression over one or all columns. Selection is restored
+  by primary key after every reload, and newly inserted rows are selected and scrolled into view.
+- **Forms.** `RecordDialog` builds one editor per `Field`: line edit (text, code, integer), date
+  edit, choice combo or foreign-key combo (with a "None" entry for nullable keys). Validation order:
+  client checks (required, length, integer range, distinct pairs) → business rules
+  (`operations.check_insert`) → database; each error is shown on its field or in a banner.
+- **Delete.** Before confirming, `cascade_counts` reports the child rows that `ON DELETE CASCADE`
+  will remove (warehouse → zones → bins, zone → bins, header → lines).
+- **Styling.** One stylesheet (`style.qss`) on the Fusion style with an explicit light palette.
+  `@ASSETS@` in the stylesheet is replaced at load time with the absolute path of `assets/`.
+  Colours painted in code (status labels, sidebar) live in `theme.py`. Fonts: Segoe UI Variable
+  Text / Segoe UI for text, Cascadia Mono / Consolas for codes and identifiers.
+- **Keyboard.** Ctrl+N new record, Del delete selection, Ctrl+F filter (Esc clears), F5 refresh,
+  Ctrl+E export CSV, Ctrl+L toggle the SQL activity panel. Window-level shortcuts do not steal keys
+  from text inputs (Delete inside a filter box edits the text).
+
+## 8. Credentials and settings
+
+| Item | Storage |
+|---|---|
+| Host, port, user, database | `QSettings` → `HKEY_CURRENT_USER\Software\StockTransfer\Stock Transfer Manager` |
+| Password (only when "Remember password" is ticked) | Windows Credential Manager, generic credential `StockTransferManager`, account `user@host:port`, via `keyring` |
+
+Nothing is written inside the project directory, so no credential can be committed. Unticking
+the option and connecting deletes the stored password. The application never logs credentials.
+
+## 9. Known limitations
+
+- Business-rule checks run before the write transaction without row locks, so two clients
+  writing at the same moment could both pass a stock check. Moving the rules into triggers (open
+  work item in the knowledge file, section 10) would close this window.
+- Transfer status transitions are enforced by the application only; direct SQL can still set any
+  status allowed by `chk_transfer_status`.
+- Master data is insert/delete only; the only updates are transfer status and put-away bins.
+- Bins have no capacity attribute, so utilization is the share of occupied bins.
+- The trigger bodies reference `Transfer` / `Transfer_Line` in mixed case; the server must run
+  with `lower_case_table_names = 1` (the Windows default).
+- All queries run synchronously on the UI thread over one connection; adequate for this data
+  volume.
+
+## 10. Extending
+
+- **New table:** add a `TableSpec` to `schema.py` (grid columns, fields, primary key, description)
+  and include it in `TABLES`; add its list query to `db._LIST_SQL` and its count to `_COUNT_SQL`;
+  add foreign-key lookups to `_LOOKUP_SQL` / `_LOOKUP_LABELS`, and unique-key and CHECK
+  messages to `_UNIQUE_KEYS` / `_CHECKS`.
+- **New report:** add the query to `db._REPORT_SQL` and a `ReportSpec` to `reports.REPORTS`.
+- **New workflow:** implement the operation in `operations.py` using `db` functions inside one
+  `Database.transaction()`, add a page under `workflows/`, and register it in `workflows.WORKFLOWS`.
+
+## 11. Verification
+
+Every feature was exercised against the live database by scripts that drive the real widgets
+(dialogs, grids, shortcuts) and compare results with values computed independently from the
+sample data. Test rows were inserted and deleted by the tests themselves, auto-increment counters
+were reset afterwards, and a `mysqldump` of schema, data, triggers and view taken before testing
+was compared with one taken after: identical.
