@@ -1,13 +1,14 @@
 """One page per table: header, filter bar and a sortable, filterable grid with New and Delete."""
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLineEdit, QVBoxLayout
 
-from stm import db
+from stm import db, export
 from stm.db import Database, DbError
 from stm.dialogs import ConfirmDeleteDialog, show_error
 from stm.grid import DataGrid
@@ -31,6 +32,7 @@ class TablePage(Page):
         self._filter = QLineEdit()
         self._summary = label("", "muted")
         self._refresh_button = button("Refresh", tooltip="Reload from the database (F5)")
+        self._export_button = button("Export CSV", tooltip="Save the rows shown as a CSV file (Ctrl+E)")
         self._new_button = button("New", "primary", tooltip=f"Insert a new {spec.singular} (Ctrl+N)")
         self._new_button.setVisible(spec.can_insert)
         self._delete_button = button("Delete", "danger", tooltip="Delete the selected rows (Del)")
@@ -50,7 +52,7 @@ class TablePage(Page):
         )
         actions = QHBoxLayout()
         actions.setSpacing(8)
-        for widget in (self._refresh_button, self._delete_button, self._new_button):
+        for widget in (self._refresh_button, self._export_button, self._delete_button, self._new_button):
             actions.addWidget(widget)
 
         self._filter_column.addItem("All columns", -1)
@@ -75,6 +77,7 @@ class TablePage(Page):
 
     def _wire(self) -> None:
         self._refresh_button.clicked.connect(lambda: self.reload())
+        self._export_button.clicked.connect(self.export_csv)
         self._new_button.clicked.connect(self.new_record)
         self._delete_button.clicked.connect(self.delete_selected)
         self.grid.selectionModel().selectionChanged.connect(self._update_actions)
@@ -101,6 +104,20 @@ class TablePage(Page):
 
     def focus_main(self) -> None:
         self.grid.setFocus()
+
+    def export_csv(self) -> None:
+        path = export.ask_path(self.window(), self.spec.name)
+        if path is not None:
+            self.export_to(path)
+
+    def export_to(self, path: Path) -> int:
+        try:
+            count = export.write_csv(path, self.spec.grid, self.grid.visible_rows())
+        except OSError as err:
+            self.message.emit(f"Could not write {path}: {err.strerror}")
+            return 0
+        self.message.emit(f"Exported {count:,} rows of {self.spec.name} to {path}.")
+        return count
 
     # ---- data -------------------------------------------------------------
 

@@ -568,6 +568,127 @@ def transfer_lines(reader: Database | Transaction, transfer_id: int) -> list[Row
     )
 
 
+# --- Reports -----------------------------------------------------------------
+
+_REPORT_SQL: dict[str, str] = {
+    # Stock per warehouse and product, with what PENDING transfers have reserved.
+    "warehouse_stock": f"""
+        SELECT s.warehouse_id, s.warehouse_name, s.product_id, s.sku, s.product_name,
+               COUNT(*) AS bins,
+               SUM(s.on_hand) AS on_hand,
+               COALESCE(SUM(r.reserved), 0) AS reserved,
+               SUM(s.on_hand) - COALESCE(SUM(r.reserved), 0) AS available
+        FROM v_bin_stock s
+        LEFT JOIN ({_RESERVED_SUBQUERY}) r ON r.bin_id = s.bin_id AND r.product_id = s.product_id
+        WHERE s.on_hand <> 0
+        GROUP BY s.warehouse_id, s.warehouse_name, s.product_id, s.sku, s.product_name
+        ORDER BY s.warehouse_name, s.sku""",
+    # Transfer lines not yet confirmed or cancelled.
+    "open_transfers": """
+        SELECT t.transfer_id, t.status, t.transfer_date,
+               DATEDIFF(CURDATE(), t.transfer_date) AS age_days,
+               sw.name AS source_warehouse, dw.name AS dest_warehouse,
+               tl.source_bin_id, sb.bin_code AS source_bin_code,
+               tl.product_id, p.sku, p.name AS product_name, tl.quantity,
+               xb.bin_code AS dest_bin_code
+        FROM transfer t
+        JOIN transfer_line tl ON tl.transfer_id = t.transfer_id
+        JOIN warehouse sw ON sw.warehouse_id = t.source_warehouse_id
+        JOIN warehouse dw ON dw.warehouse_id = t.dest_warehouse_id
+        JOIN bin sb ON sb.bin_id = tl.source_bin_id
+        LEFT JOIN bin xb ON xb.bin_id = tl.dest_bin_id
+        JOIN product p ON p.product_id = tl.product_id
+        WHERE t.status IN ('PENDING', 'IN_TRANSIT')
+        ORDER BY t.transfer_date, t.transfer_id, sb.bin_code""",
+    # Occupied versus empty bins per zone (a bin is occupied when it holds stock).
+    "bin_utilization": """
+        SELECT z.zone_id, w.name AS warehouse_name, z.zone_name,
+               COUNT(*) AS bins,
+               SUM(o.units IS NOT NULL) AS occupied,
+               SUM(o.units IS NULL) AS empty_bins,
+               ROUND(100 * SUM(o.units IS NOT NULL) / COUNT(*), 1) AS utilization,
+               COALESCE(SUM(o.units), 0) AS units
+        FROM bin b
+        JOIN zone z ON z.zone_id = b.zone_id
+        JOIN warehouse w ON w.warehouse_id = z.warehouse_id
+        LEFT JOIN (SELECT bin_id, SUM(on_hand) AS units
+                   FROM v_bin_stock
+                   GROUP BY bin_id
+                   HAVING SUM(on_hand) > 0) o ON o.bin_id = b.bin_id
+        GROUP BY z.zone_id, w.name, z.zone_name
+        ORDER BY w.name, z.zone_name""",
+    # Age of stock = days since the first inbound movement (receipt or confirmed transfer) into the bin.
+    "stock_ageing": """
+        SELECT s.warehouse_name, s.bin_id, s.bin_code, s.product_id, s.sku, s.product_name, s.on_hand,
+               i.first_in, i.last_in,
+               DATEDIFF(CURDATE(), i.first_in) AS age_days,
+               CASE
+                   WHEN DATEDIFF(CURDATE(), i.first_in) <= 30 THEN '0-30 days'
+                   WHEN DATEDIFF(CURDATE(), i.first_in) <= 60 THEN '31-60 days'
+                   WHEN DATEDIFF(CURDATE(), i.first_in) <= 90 THEN '61-90 days'
+                   ELSE 'Over 90 days'
+               END AS age_band
+        FROM v_bin_stock s
+        JOIN (SELECT bin_id, product_id, MIN(moved_on) AS first_in, MAX(moved_on) AS last_in
+              FROM (SELECT rl.bin_id, rl.product_id, r.receipt_date AS moved_on
+                    FROM receipt_line rl
+                    JOIN receipt r ON r.receipt_id = rl.receipt_id
+                    UNION ALL
+                    SELECT tl.dest_bin_id, tl.product_id, t.transfer_date
+                    FROM transfer_line tl
+                    JOIN transfer t ON t.transfer_id = tl.transfer_id
+                    WHERE t.status = 'CONFIRMED') inbound
+              GROUP BY bin_id, product_id) i
+          ON i.bin_id = s.bin_id AND i.product_id = s.product_id
+        WHERE s.on_hand > 0
+        ORDER BY age_days DESC, s.bin_code""",
+    # Damage per warehouse and product, as a share of the units that came into that warehouse.
+    "damaged_stock": """
+        SELECT w.warehouse_id, w.name AS warehouse_name, p.product_id, p.sku, p.name AS product_name,
+               COUNT(*) AS incidents,
+               SUM(d.quantity) AS units,
+               COALESCE(i.inbound, 0) AS inbound,
+               CASE WHEN COALESCE(i.inbound, 0) = 0 THEN NULL
+                    ELSE ROUND(100 * SUM(d.quantity) / i.inbound, 1) END AS damage_rate,
+               GROUP_CONCAT(DISTINCT b.bin_code ORDER BY b.bin_code SEPARATOR ', ') AS bins,
+               MAX(d.damage_date) AS last_date
+        FROM damaged d
+        JOIN bin b ON b.bin_id = d.bin_id
+        JOIN zone z ON z.zone_id = b.zone_id
+        JOIN warehouse w ON w.warehouse_id = z.warehouse_id
+        JOIN product p ON p.product_id = d.product_id
+        LEFT JOIN (SELECT warehouse_id, product_id, SUM(received + transferred_in) AS inbound
+                   FROM v_bin_stock
+                   GROUP BY warehouse_id, product_id) i
+               ON i.warehouse_id = w.warehouse_id AND i.product_id = p.product_id
+        GROUP BY w.warehouse_id, w.name, p.product_id, p.sku, p.name, i.inbound
+        ORDER BY units DESC, w.name""",
+    # Company-wide stock (on hand plus in transit) against each product's reorder level.
+    "reorder_needs": """
+        SELECT p.product_id, p.sku, p.name AS product_name, p.reorder_level,
+               COALESCE(s.on_hand, 0) AS on_hand,
+               COALESCE(t.in_transit, 0) AS in_transit,
+               COALESCE(s.on_hand, 0) + COALESCE(t.in_transit, 0) AS total,
+               GREATEST(p.reorder_level - COALESCE(s.on_hand, 0) - COALESCE(t.in_transit, 0), 0) AS shortfall,
+               CASE WHEN COALESCE(s.on_hand, 0) + COALESCE(t.in_transit, 0) < p.reorder_level
+                    THEN 'REORDER' ELSE 'OK' END AS status
+        FROM product p
+        LEFT JOIN (SELECT product_id, SUM(on_hand) AS on_hand
+                   FROM v_bin_stock
+                   GROUP BY product_id) s ON s.product_id = p.product_id
+        LEFT JOIN (SELECT tl.product_id, SUM(tl.quantity) AS in_transit
+                   FROM transfer_line tl
+                   JOIN transfer t ON t.transfer_id = tl.transfer_id
+                   WHERE t.status = 'IN_TRANSIT'
+                   GROUP BY tl.product_id) t ON t.product_id = p.product_id
+        ORDER BY shortfall DESC, p.sku""",
+}
+
+
+def run_report(db: Database, key: str) -> list[Row]:
+    return db.query(_REPORT_SQL[key])
+
+
 def _like(text: str) -> str:
     escaped = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     return f"%{escaped}%"

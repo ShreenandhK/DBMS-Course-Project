@@ -95,6 +95,26 @@ QLabel[role="detail"] {
     color: #6B7680;
 }
 
+QTabBar#ReportTabs {
+    background: transparent;
+}
+QTabBar#ReportTabs::tab {
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: #4A5560;
+    padding: 5px 12px 6px 12px;
+    margin-right: 2px;
+}
+QTabBar#ReportTabs::tab:hover {
+    color: #1C2127;
+    border-bottom-color: #C4CAD1;
+}
+QTabBar#ReportTabs::tab:selected {
+    color: #0E3D52;
+    border-bottom-color: #18607F;
+}
+
 QWidget#WorkflowBody {
     background: #F4F5F7;
 }

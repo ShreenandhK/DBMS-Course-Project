@@ -47,7 +47,8 @@ Manager.
 | Filter | Text filter over all columns or one chosen column; the status bar shows `visible of total` rows |
 | New | Form generated from the table definition. Foreign keys are dropdowns; inputs are checked before anything is sent |
 | Delete | Deletes the selected rows in one transaction after a confirmation that names each record and lists cascaded child rows |
-| SQL activity | Bottom panel listing each `START TRANSACTION`, `INSERT`/`DELETE` with its values, rows affected, and `COMMIT`/`ROLLBACK` |
+| SQL activity | Bottom panel listing each `START TRANSACTION`, `INSERT`/`UPDATE`/`DELETE` with its values, rows affected, and `COMMIT`/`ROLLBACK` |
+| Export CSV | Saves the rows currently shown (after filter and sort) of any table or report as a CSV file (UTF-8, opens in Excel) |
 
 Reads run in autocommit mode, so **Refresh** always shows changes made from other clients such
 as the MySQL command line.
@@ -80,6 +81,20 @@ in the insert forms of the table pages):
 Status changes use `UPDATE transfer SET status = ? WHERE transfer_id = ? AND status = ?`, so a
 transfer changed by someone else in the meantime is reported instead of overwritten.
 
+### Reports
+
+**Operations → Reports** runs read-only queries (joins, subqueries, aggregation over `v_bin_stock`)
+each time a tab is opened or F5 is pressed. Every report can be filtered and exported to CSV.
+
+| Report | What it shows |
+|---|---|
+| Warehouse stock | Units on hand per warehouse and product, bins used, reserved by PENDING transfers, available |
+| Pending and in transit | Transfer lines not yet confirmed, with age in days; IN_TRANSIT units are in no bin |
+| Bin utilization | Bins per zone, occupied versus empty, occupied % (bins have no capacity column) |
+| Stock ageing | Days since the first inbound movement (receipt or confirmed transfer) into each stocked bin, in 30-day bands |
+| Damaged stock | Damage incidents and units per warehouse and product, as a % of units received into that warehouse |
+| Reorder needs | Company-wide stock (on hand plus in transit) against each product's reorder level, with the shortfall |
+
 ### Keyboard
 
 | Key | Action |
@@ -87,7 +102,8 @@ transfer changed by someone else in the meantime is reported instead of overwrit
 | Ctrl+N | New record on the current table |
 | Del | Delete selected rows |
 | Ctrl+F | Focus the filter box (Esc clears it) |
-| F5 | Reload the current table and the sidebar counts |
+| F5 | Reload the current page (or re-run the report) and the sidebar counts |
+| Ctrl+E | Export the rows shown to CSV |
 | Ctrl+L | Show or hide the SQL activity panel |
 
 ### Database errors
@@ -124,6 +140,9 @@ UI/
     ├── grid.py          sortable, filterable data grid
     ├── table_model.py   grid model, sort/filter proxy, status chips
     ├── record_dialog.py generated insert form with inline validation
+    ├── reports.py       report definitions: columns, keys, summary lines (no SQL)
+    ├── reports_page.py  tabbed reports page
+    ├── export.py        CSV export
     ├── dialogs.py       confirmation and error dialogs
     ├── activity_log.py  SQL activity panel
     ├── widgets.py       small shared widget helpers
@@ -205,6 +224,14 @@ mysql --login-path=local stock_transfer_db
    `UPDATE transfer ... WHERE ... AND status = 'IN_TRANSIT'` in one transaction.
 4. To undo: **Transfers** → select transfer 4 → **Del** → **Delete** (its line is removed by
    ON DELETE CASCADE), then reset the counter as below.
+
+### 5. Reports (optional)
+
+1. Click **Reports**. **Warehouse stock** totals 3,324 on hand, 150 reserved, 3,174 available.
+2. Click **Reorder needs**: 3 products below reorder level (Copper Wire, Ceiling Fan, Cordless
+   Drill), shortfall 115 units. Modular Switch counts its 500 in-transit units.
+3. Click **Bin utilization**: 5 of 17 bins occupied (29.4%).
+4. Press **Ctrl+E** and save the CSV; open it in Excel to show the same rows.
 
 ### After the demo
 

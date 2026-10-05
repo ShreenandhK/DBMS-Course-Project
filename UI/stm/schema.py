@@ -24,6 +24,7 @@ class Style(Enum):
     NUMBER = auto()  # right-aligned with thousands separators
     DATE = auto()
     STATUS = auto()  # transfer status chip
+    PERCENT = auto()  # right-aligned, one decimal and a percent sign
 
 
 class Kind(Enum):
@@ -102,6 +103,7 @@ CODE = Style.CODE
 NUMBER = Style.NUMBER
 DATE = Style.DATE
 STATUS = Style.STATUS
+PERCENT = Style.PERCENT
 
 
 def _ref(column: str, label: str, reference: str, *, required: bool = True, hint: str = "") -> Field:

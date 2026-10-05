@@ -26,7 +26,7 @@ EMPTY = "—"
 
 _RIGHT = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
 _LEFT = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
-_NUMERIC = {Style.NUMBER, Style.ID}
+_NUMERIC = {Style.NUMBER, Style.ID, Style.PERCENT}
 _MONO = {Style.CODE, Style.ID}
 
 AnyIndex = QModelIndex | QPersistentModelIndex
@@ -37,6 +37,8 @@ def format_value(value: Any, style: Style) -> str:
         return EMPTY
     if style is Style.NUMBER and isinstance(value, (int, float)):
         return f"{value:,}"
+    if style is Style.PERCENT and isinstance(value, (int, float)):
+        return f"{value:.1f}%"
     if isinstance(value, date):
         return value.isoformat()
     return str(value)

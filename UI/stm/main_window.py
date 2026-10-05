@@ -11,10 +11,12 @@ from stm import APP_NAME, db, schema
 from stm.activity_log import ActivityLog
 from stm.db import Database, DbError
 from stm.page import Page
+from stm.reports_page import ReportsPage
 from stm.sidebar import Sidebar
 from stm.table_page import TablePage
 from stm.workflows import WORKFLOWS
 
+OPERATIONS = (*WORKFLOWS, ("reports", "Reports", ReportsPage))
 FIRST_PAGE = "v_bin_stock"
 ACTIVITY_HEIGHT = 150
 
@@ -49,14 +51,14 @@ class MainWindow(QMainWindow):
 
     def _page_factories(self) -> dict[str, Callable[[], Page]]:
         factories: dict[str, Callable[[], Page]] = {
-            key: (lambda factory=factory: factory(self._db)) for key, _label, factory in WORKFLOWS
+            key: (lambda factory=factory: factory(self._db)) for key, _label, factory in OPERATIONS
         }
         for spec in schema.TABLES:
             factories[spec.name] = lambda spec=spec: TablePage(self._db, spec)
         return factories
 
     def _build_central(self) -> None:
-        self._sidebar.add_group("Operations", [(key, title) for key, title, _factory in WORKFLOWS])
+        self._sidebar.add_group("Operations", [(key, title) for key, title, _factory in OPERATIONS])
         for group, specs in schema.grouped():
             self._sidebar.add_group(group, [(spec.name, spec.title) for spec in specs])
 
@@ -83,6 +85,8 @@ class MainWindow(QMainWindow):
 
     def _build_menu(self) -> None:
         file_menu = self.menuBar().addMenu("&File")
+        file_menu.addAction(self._action("&Export CSV…", QKeySequence("Ctrl+E"), self._export_csv))
+        file_menu.addSeparator()
         file_menu.addAction(self._action("E&xit", QKeySequence.StandardKey.Quit, self.close))
 
         edit_menu = self.menuBar().addMenu("&Edit")
@@ -154,6 +158,10 @@ class MainWindow(QMainWindow):
     def _delete_selected(self) -> None:
         if (page := self._current_page()) is not None:
             page.delete_selected()
+
+    def _export_csv(self) -> None:
+        if (page := self._current_page()) is not None:
+            page.export_csv()
 
     def _focus_filter(self) -> None:
         if (page := self._current_page()) is not None:

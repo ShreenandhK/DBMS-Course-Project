@@ -33,6 +33,9 @@ class Page(QWidget):
     def focus_filter(self) -> None:
         """Ctrl+F."""
 
+    def export_csv(self) -> None:
+        """Ctrl+E."""
+
     def focus_main(self) -> None:
         self.setFocus()
 

@@ -21,6 +21,9 @@ STATUS_COLORS: dict[str, tuple[QColor, QColor]] = {
     "IN_TRANSIT": (QColor("#FBF0D9"), QColor("#8A5A00")),
     "CONFIRMED": (QColor("#E2F1E6"), QColor("#1E6B3A")),
     "CANCELLED": (QColor("#F7E7E7"), QColor("#9A3B3B")),
+    # Reorder report
+    "REORDER": (QColor("#F7E7E7"), QColor("#9A3B3B")),
+    "OK": (QColor("#E2F1E6"), QColor("#1E6B3A")),
 }
 
 
