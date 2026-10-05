@@ -1,9 +1,14 @@
-﻿__pycache__/
+__pycache__/
 *.pyc
+*.pyo
 venv/
 .venv/
 .env
+.env.*
 *.log
 .vscode/
 .idea/
+*.iml
+Thumbs.db
+desktop.ini
 stock_transfer_db_knowledge.md
