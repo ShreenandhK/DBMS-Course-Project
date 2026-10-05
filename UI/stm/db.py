@@ -208,6 +208,113 @@ def _compact(sql: str) -> str:
     return " ".join(sql.split())
 
 
+# --- Grid reads --------------------------------------------------------------
+# Each query returns the table's own columns plus readable names for its
+# foreign keys. Aliases match the GridColumn keys in stm.schema.
+
+_LIST_SQL: dict[str, str] = {
+    "supplier": """
+        SELECT supplier_id, name, contact
+        FROM supplier
+        ORDER BY supplier_id""",
+    "warehouse": """
+        SELECT warehouse_id, name, location
+        FROM warehouse
+        ORDER BY warehouse_id""",
+    "product": """
+        SELECT product_id, sku, name, reorder_level
+        FROM product
+        ORDER BY product_id""",
+    "zone": """
+        SELECT z.zone_id, z.zone_name, z.warehouse_id, w.name AS warehouse_name
+        FROM zone z
+        JOIN warehouse w ON w.warehouse_id = z.warehouse_id
+        ORDER BY z.zone_id""",
+    "bin": """
+        SELECT b.bin_id, b.bin_code, b.zone_id, z.zone_name,
+               z.warehouse_id, w.name AS warehouse_name
+        FROM bin b
+        JOIN zone z ON z.zone_id = b.zone_id
+        JOIN warehouse w ON w.warehouse_id = z.warehouse_id
+        ORDER BY b.bin_id""",
+    "receipt": """
+        SELECT r.receipt_id, r.receipt_date, r.supplier_id, s.name AS supplier_name,
+               r.warehouse_id, w.name AS warehouse_name
+        FROM receipt r
+        JOIN supplier s ON s.supplier_id = r.supplier_id
+        JOIN warehouse w ON w.warehouse_id = r.warehouse_id
+        ORDER BY r.receipt_id""",
+    "receipt_line": """
+        SELECT rl.receipt_id, rl.bin_id, b.bin_code, rl.product_id, p.sku,
+               p.name AS product_name, rl.quantity
+        FROM receipt_line rl
+        JOIN bin b ON b.bin_id = rl.bin_id
+        JOIN product p ON p.product_id = rl.product_id
+        ORDER BY rl.receipt_id, b.bin_code, p.sku""",
+    "transfer": """
+        SELECT t.transfer_id, t.status, t.transfer_date,
+               t.source_warehouse_id, sw.name AS source_warehouse,
+               t.dest_warehouse_id, dw.name AS dest_warehouse
+        FROM transfer t
+        JOIN warehouse sw ON sw.warehouse_id = t.source_warehouse_id
+        JOIN warehouse dw ON dw.warehouse_id = t.dest_warehouse_id
+        ORDER BY t.transfer_id""",
+    "transfer_line": """
+        SELECT tl.transfer_id, t.status, tl.source_bin_id, sb.bin_code AS source_bin_code,
+               tl.product_id, p.sku, p.name AS product_name,
+               tl.dest_bin_id, xb.bin_code AS dest_bin_code, tl.quantity
+        FROM transfer_line tl
+        JOIN transfer t ON t.transfer_id = tl.transfer_id
+        JOIN bin sb ON sb.bin_id = tl.source_bin_id
+        LEFT JOIN bin xb ON xb.bin_id = tl.dest_bin_id
+        JOIN product p ON p.product_id = tl.product_id
+        ORDER BY tl.transfer_id, sb.bin_code, p.sku""",
+    "dispatch": """
+        SELECT d.dispatch_id, d.dispatch_date, d.warehouse_id, w.name AS warehouse_name,
+               d.destination
+        FROM dispatch d
+        JOIN warehouse w ON w.warehouse_id = d.warehouse_id
+        ORDER BY d.dispatch_id""",
+    "dispatch_line": """
+        SELECT dl.dispatch_id, dl.bin_id, b.bin_code, dl.product_id, p.sku,
+               p.name AS product_name, dl.quantity
+        FROM dispatch_line dl
+        JOIN bin b ON b.bin_id = dl.bin_id
+        JOIN product p ON p.product_id = dl.product_id
+        ORDER BY dl.dispatch_id, b.bin_code, p.sku""",
+    "damaged": """
+        SELECT dm.bin_id, b.bin_code, dm.product_id, p.sku, p.name AS product_name,
+               dm.damage_date, dm.quantity, dm.reason
+        FROM damaged dm
+        JOIN bin b ON b.bin_id = dm.bin_id
+        JOIN product p ON p.product_id = dm.product_id
+        ORDER BY dm.damage_date, b.bin_code, p.sku""",
+}
+
+_COUNT_SQL = """
+    SELECT (SELECT COUNT(*) FROM supplier)      AS supplier,
+           (SELECT COUNT(*) FROM warehouse)     AS warehouse,
+           (SELECT COUNT(*) FROM product)       AS product,
+           (SELECT COUNT(*) FROM zone)          AS zone,
+           (SELECT COUNT(*) FROM bin)           AS bin,
+           (SELECT COUNT(*) FROM receipt)       AS receipt,
+           (SELECT COUNT(*) FROM receipt_line)  AS receipt_line,
+           (SELECT COUNT(*) FROM transfer)      AS transfer,
+           (SELECT COUNT(*) FROM transfer_line) AS transfer_line,
+           (SELECT COUNT(*) FROM dispatch)      AS dispatch,
+           (SELECT COUNT(*) FROM dispatch_line) AS dispatch_line,
+           (SELECT COUNT(*) FROM damaged)       AS damaged"""
+
+
+def list_rows(db: Database, table: str) -> list[Row]:
+    return db.query(_LIST_SQL[table])
+
+
+def row_counts(db: Database) -> dict[str, int]:
+    rows = db.query(_COUNT_SQL)
+    return {name: int(count) for name, count in rows[0].items()}
+
+
 # --- Error translation -------------------------------------------------------
 
 _TABLE_NOUNS: dict[str, tuple[str, str]] = {
