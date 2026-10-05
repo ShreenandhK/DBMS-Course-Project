@@ -38,6 +38,25 @@ or from inside `UI`:
 `main.py` resolves the stylesheet and assets relative to its own location, so the working
 directory does not matter; only the script path must be correct.
 
+### One-click launcher
+
+`Start Stock Transfer Manager.cmd` (repository root) runs `UI\launch.ps1` with
+`-ExecutionPolicy Bypass`. The script is idempotent and ASCII-only (Windows PowerShell 5.1 reads
+BOM-less files as ANSI):
+
+| Step | Behaviour |
+|---|---|
+| Python | Imports `PySide6.QtWidgets`, `mysql.connector`, `keyring` from `UI\venv`; if the interpreter is missing or broken, recreates the venv with `py -3 -m venv --clear` (Python ≥ 3.12 required); if packages are missing, reinstalls `requirements.txt`. pip failures are classified (path too long / WinError 206, no network, other) |
+| Target | Host and port from the app's saved settings (`HKCU\Software\StockTransfer\Stock Transfer Manager`), else `localhost:3306`; overridable with `-HostName` / `-Port` |
+| Service | For a local host only: finds `MySQL80` (or the first `MySQL*` service, or `-ServiceName`); refuses with guidance if *Disabled*; starts it if *Stopped*/*Paused*, elevating through UAC only when `Start-Service` is denied; waits for *Running* |
+| Port | Polls a TCP connect until it succeeds or `-WaitSeconds` (default 90) elapses |
+| Database | If the `mysql` client and login path (`-LoginPath`, default `local`) work, checks `information_schema.schemata`; offers to `source stock_transfer_db.sql` when the schema is missing |
+| Running copy | Detects `python*.exe` processes whose command line contains `UI\main.py` and asks before starting another |
+| Start | Starts `pythonw.exe main.py` (no console); if it exits within 3 s, re-runs it with `python.exe` and prints the last lines of output |
+
+Switches: `-CheckOnly` (all checks, no start), `-NoPause` (never wait for input, for automation).
+Log: `%LOCALAPPDATA%\StockTransferManager\launcher.log`. Exit code 0 on success, 1 on any failure.
+
 `requirements.txt` pins every package, including transitive dependencies, to the versions above.
 
 ## 2. Architecture
@@ -76,14 +95,17 @@ not declared as a form field of that table.
 | Module | Responsibility |
 |---|---|
 | `main.py` | Creates `QApplication` (Fusion, forced light palette, application font, stylesheet), runs the login dialog, opens the main window maximized |
+| `launch.ps1` | One-click start-up checks and repairs (section 1) |
 | `stm/db.py` | `Database` (single connection), `Transaction`, statement listeners, list/lookup/count queries, stock queries, report queries, generic insert/delete, transfer updates, error translation |
 | `stm/schema.py` | `TableSpec` per table: grid columns (`GridColumn`, `Style`), insert fields (`Field`, `Kind`), primary key, record description, distinct-value rules |
 | `stm/operations.py` | Business rules (`check_insert`, `check_stock`, `check_bin_in_warehouse`, `check_transition`) and workflows (`receive`, `create_transfer`, `ship_transfer`, `save_putaway`, `confirm_transfer`, `cancel_transfer`, `dispatch`, `record_damage`) |
 | `stm/reports.py` | `ReportSpec` per report: columns, row key, summary line |
 | `stm/credentials.py` | Load/save connection settings and the optional remembered password |
 | `stm/login_dialog.py` | Connection dialog; stays open with a translated message on failure |
-| `stm/main_window.py` | Page registry, sidebar, splitter with the SQL activity panel, menus, shortcuts, status bar |
-| `stm/page.py` | `Page` base class (hooks: `activate`, `refresh`, `new_record`, `delete_selected`, `focus_filter`, `export_csv`) and the shared page header |
+| `stm/main_window.py` | Sidebar, page creation, splitter with the SQL activity panel, menus, shortcuts, status bar |
+| `stm/navigation.py` | Page catalogue (`PAGES`: key → title, description, factory) and sidebar grouping (`GROUPS`); single source for sidebar labels, tooltips and the quick guide |
+| `stm/quick_guide.py` | F1 dialog generated from `navigation` plus fixed text on stock, transfer states and shortcuts |
+| `stm/page.py` | `Page` base class (hooks: `activate`, `refresh`, `new_record`, `delete_selected`, `focus_filter`, `export_csv`) and the shared page header (title, plain-language subtitle, technical detail line) |
 | `stm/table_page.py` | Grid, filter, insert, delete, export for one table or the view |
 | `stm/grid.py` | `DataGrid`: read-only `QTableView` over row dicts with sorting, filtering, selection by key, column fitting, column totals |
 | `stm/table_model.py` | `RecordModel` (display/sort/alignment/font roles), `RecordFilterProxy`, `StatusChipDelegate` |
@@ -205,6 +227,7 @@ forms of the line tables.
 | Forward-only status | transfers | Allowed transitions below; `CONFIRMED` and `CANCELLED` are final |
 | Destination bins before confirming | transfers | Every line has a `dest_bin_id`; also enforced in the database by `trg_transfer_confirm_bu` |
 | Destination bin ≠ source bin | transfers | Also enforced in the database by `chk_transfer_line_bins` |
+| Deletes never leave negative stock | receipts, receipt lines, transfers, transfer lines | `check_delete` computes the on-hand change per bin/product that removing the records would cause (receipt lines −qty; IN_TRANSIT/CONFIRMED lines +qty at the source; CONFIRMED lines −qty at the destination) and refuses if any bin would drop below zero. Checked before the confirmation dialog. Deleting dispatches or damage only adds stock and is not checked |
 
 Transfer state machine (`operations.ALLOWED_TRANSITIONS`):
 
@@ -242,15 +265,23 @@ encoded as UTF-8 with BOM for spreadsheet compatibility.
 
 ## 7. User interface implementation
 
-- **Pages.** `MainWindow` keeps a registry of page factories keyed by sidebar entry (workflow keys
-  and table names). Pages are created on first use and `activate()` is called on every visit, so
-  data is never stale after changes made elsewhere. `data_changed` from any page refreshes the
-  sidebar counts.
+- **Navigation.** `navigation.GROUPS` orders the sidebar from everyday work to setup: *Tasks*
+  (receive, new transfer, process transfers, dispatch, damage), *Look up* (bin stock, bin search,
+  reports), *Movement records* (the document tables), *Locations*, *Products & suppliers*. Every
+  entry and heading carries a one-line tooltip from its `PageEntry.description` /
+  `TableSpec.description`; F1 opens a quick guide generated from the same data.
+- **Pages.** Pages are created on first use from `navigation.PAGES` and `activate()` is called on
+  every visit, so data is never stale after changes made elsewhere. `data_changed` from any page
+  refreshes the sidebar counts. Page headers show a plain-language purpose line and a smaller
+  detail line (task steps, or table name and key). Task pages keep the error banner and action
+  buttons in a fixed bar below the scrollable form, so they are always visible.
 - **Grids.** `DataGrid` wraps `RecordModel` + `RecordFilterProxy`. The model returns formatted
   text for `DisplayRole` and raw values for a custom sort role, so numbers and dates sort
   correctly; alignment and monospace font are driven by the column `Style`. The proxy filters with
   an escaped, case-insensitive regular expression over one or all columns. Selection is restored
   by primary key after every reload, and newly inserted rows are selected and scrolled into view.
+  An empty grid paints an explanatory message (`DataGrid.empty_text`, or "No rows match the
+  filter." when a filter hides every row).
 - **Forms.** `RecordDialog` builds one editor per `Field`: line edit (text, code, integer), date
   edit, choice combo or foreign-key combo (with a "None" entry for nullable keys). Validation order:
   client checks (required, length, integer range, distinct pairs) → business rules
@@ -273,7 +304,9 @@ encoded as UTF-8 with BOM for spreadsheet compatibility.
 | Password (only when "Remember password" is ticked) | Windows Credential Manager, generic credential `StockTransferManager`, account `user@host:port`, via `keyring` |
 
 Nothing is written inside the project directory, so no credential can be committed. Unticking
-the option and connecting deletes the stored password. The application never logs credentials.
+the option and connecting deletes the stored password. If the option is on but the stored
+password has been removed outside the app, the box stays ticked and the password field is empty,
+so typing it once stores it again. The application never logs credentials.
 
 ## 9. Known limitations
 

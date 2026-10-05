@@ -7,17 +7,13 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QCloseEvent, QGuiApplication, QKeySequence
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QMainWindow, QSplitter, QStackedWidget, QWidget
 
-from stm import APP_NAME, db, schema
+from stm import APP_NAME, db, navigation
 from stm.activity_log import ActivityLog
 from stm.db import Database, DbError
 from stm.page import Page
-from stm.reports_page import ReportsPage
+from stm.quick_guide import QuickGuideDialog
 from stm.sidebar import Sidebar
-from stm.table_page import TablePage
-from stm.workflows import WORKFLOWS
 
-OPERATIONS = (*WORKFLOWS, ("reports", "Reports", ReportsPage))
-FIRST_PAGE = "v_bin_stock"
 ACTIVITY_HEIGHT = 150
 
 
@@ -26,7 +22,6 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._db = database
         self._pages: dict[str, Page] = {}
-        self._factories: dict[str, Callable[[], Page]] = self._page_factories()
         self.setWindowTitle(APP_NAME)
         available = QGuiApplication.primaryScreen().availableGeometry()
         self.resize(min(1360, int(available.width() * 0.92)), min(820, int(available.height() * 0.9)))
@@ -45,22 +40,14 @@ class MainWindow(QMainWindow):
         self._build_menu()
         self._sidebar.page_selected.connect(self._open_page)
         self.refresh_counts()
-        self._sidebar.select(FIRST_PAGE)
+        self._sidebar.select(navigation.FIRST_PAGE)
 
     # ---- construction -----------------------------------------------------
 
-    def _page_factories(self) -> dict[str, Callable[[], Page]]:
-        factories: dict[str, Callable[[], Page]] = {
-            key: (lambda factory=factory: factory(self._db)) for key, _label, factory in OPERATIONS
-        }
-        for spec in schema.TABLES:
-            factories[spec.name] = lambda spec=spec: TablePage(self._db, spec)
-        return factories
-
     def _build_central(self) -> None:
-        self._sidebar.add_group("Operations", [(key, title) for key, title, _factory in OPERATIONS])
-        for group, specs in schema.grouped():
-            self._sidebar.add_group(group, [(spec.name, spec.title) for spec in specs])
+        for group in navigation.GROUPS:
+            entries = [(key, navigation.PAGES[key].title, navigation.PAGES[key].description) for key in group.keys]
+            self._sidebar.add_group(group.title, group.description, entries)
 
         self._splitter.addWidget(self._stack)
         self._splitter.addWidget(self._activity)
@@ -103,6 +90,9 @@ class MainWindow(QMainWindow):
         self._activity_action = activity
         view_menu.addAction(activity)
 
+        help_menu = self.menuBar().addMenu("&Help")
+        help_menu.addAction(self._action("&Quick guide", QKeySequence(Qt.Key.Key_F1), self._show_guide))
+
     def _action(self, text: str, shortcut: QKeySequence | QKeySequence.StandardKey, slot: Callable[[], None]) -> QAction:
         action = QAction(text, self)
         action.setShortcut(shortcut)
@@ -125,7 +115,7 @@ class MainWindow(QMainWindow):
         page.focus_main()
 
     def _create_page(self, key: str) -> Page:
-        page = self._factories[key]()
+        page = navigation.PAGES[key].factory(self._db)
         page.counts_changed.connect(lambda visible, total, p=page: self._show_counts(p, visible, total))
         page.message.connect(self.show_message)
         page.data_changed.connect(self.refresh_counts)
@@ -166,6 +156,9 @@ class MainWindow(QMainWindow):
     def _focus_filter(self) -> None:
         if (page := self._current_page()) is not None:
             page.focus_filter()
+
+    def _show_guide(self) -> None:
+        QuickGuideDialog(self).exec()
 
     def _toggle_activity(self) -> None:
         self._activity.setVisible(self._activity_action.isChecked())

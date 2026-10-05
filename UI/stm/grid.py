@@ -5,7 +5,7 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 from PySide6.QtCore import QItemSelection, QItemSelectionModel, Qt, Signal
-from PySide6.QtGui import QFont, QFontMetrics
+from PySide6.QtGui import QFont, QFontMetrics, QPainter, QPaintEvent
 from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QTableView, QWidget
 
 from stm import theme
@@ -25,14 +25,23 @@ class DataGrid(QTableView):
     counts_changed = Signal(int, int)  # visible rows, total rows
 
     def __init__(
-        self, columns: Sequence[GridColumn], key_of: KeyFunction, parent: QWidget | None = None, refit: bool = False
+        self,
+        columns: Sequence[GridColumn],
+        key_of: KeyFunction,
+        parent: QWidget | None = None,
+        refit: bool = False,
+        empty_text: str = "No rows.",
     ) -> None:
-        """``refit`` re-sizes columns on every load (small working grids); otherwise only on the first."""
+        """``refit`` re-sizes columns on every load (small working grids); otherwise only on the first.
+
+        ``empty_text`` is shown in the grid when it has no rows at all.
+        """
         super().__init__(parent)
         self.columns = tuple(columns)
         self._key_of = key_of
         self._refit = refit
         self._fitted = False
+        self.empty_text = empty_text
         self._model = RecordModel(self.columns, self)
         self._proxy = RecordFilterProxy(self)
         self._proxy.setSourceModel(self._model)
@@ -151,5 +160,17 @@ class DataGrid(QTableView):
             header.resizeSection(column, max(MIN_COLUMN_WIDTH, min(MAX_COLUMN_WIDTH, width)))
         self._fitted = self._model.rowCount() > 0
 
+    def paintEvent(self, event: QPaintEvent) -> None:
+        super().paintEvent(event)
+        if self._proxy.rowCount() > 0:
+            return
+        text = self.empty_text if self._model.rowCount() == 0 else "No rows match the filter."
+        painter = QPainter(self.viewport())
+        painter.setPen(theme.TEXT_MUTED)
+        painter.setFont(theme.ui_font(10))
+        area = self.viewport().rect().adjusted(24, 28, -24, 0)
+        painter.drawText(area, int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop | Qt.TextFlag.TextWordWrap), text)
+
     def _emit_counts(self) -> None:
+        self.viewport().update()
         self.counts_changed.emit(self.visible_count(), self.total_count())

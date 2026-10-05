@@ -73,7 +73,15 @@ class ReportsPage(Page):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        layout.addWidget(page_header("Reports", "Read-only queries over the live database.", actions, extra))
+        layout.addWidget(
+            page_header(
+                "Reports",
+                "Summaries of stock, transfers, bins, ageing, damage and reorder needs. Nothing is changed here.",
+                actions,
+                extra,
+                "Choose a tab.&nbsp;&nbsp;Ctrl+F filters the rows; Ctrl+E saves the rows shown as a CSV file.",
+            )
+        )
         layout.addWidget(self._stack, 1)
 
     # ---- Page hooks -------------------------------------------------------

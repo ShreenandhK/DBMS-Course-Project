@@ -8,8 +8,9 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLineEdit, QVBoxLayout
 
-from stm import db, export
+from stm import db, export, operations
 from stm.db import Database, DbError
+from stm.operations import RuleError
 from stm.dialogs import ConfirmDeleteDialog, show_error
 from stm.grid import DataGrid
 from stm.page import Page, mono_span, page_header
@@ -27,7 +28,8 @@ class TablePage(Page):
         self.spec = spec
         self.title = spec.title
 
-        self.grid = DataGrid(spec.grid, spec.key_of)
+        empty = "No rows yet." + (" Press New (Ctrl+N) to add one." if spec.can_insert else "")
+        self.grid = DataGrid(spec.grid, spec.key_of, empty_text=empty)
         self._filter_column = QComboBox()
         self._filter = QLineEdit()
         self._summary = label("", "muted")
@@ -46,7 +48,7 @@ class TablePage(Page):
 
     def _build_layout(self) -> None:
         kind = "View" if self.spec.is_view else "Table"
-        subtitle = (
+        detail = (
             f"{kind} {mono_span(self.spec.name)}&nbsp;&nbsp;·&nbsp;&nbsp;"
             f"key ({', '.join(self.spec.primary_key)})"
         )
@@ -72,7 +74,7 @@ class TablePage(Page):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        layout.addWidget(page_header(self.spec.title, subtitle, actions, filters))
+        layout.addWidget(page_header(self.spec.title, self.spec.description, actions, filters, detail))
         layout.addWidget(self.grid, 1)
 
     def _wire(self) -> None:
@@ -173,6 +175,15 @@ class TablePage(Page):
             return
         keys = [self.spec.key_of(row) for row in rows]
         names = [self.spec.describe(row) for row in rows]
+        try:
+            operations.check_delete(self._db, self.spec, rows)
+        except RuleError as err:
+            show_error(self.window(), "Cannot delete", err.message, "Business rule checked by the application")
+            self.message.emit(f"Delete refused. {err.message}")
+            return
+        except DbError as err:
+            self.message.emit(f"Could not check stock before deleting: {err.message}")
+            return
         try:
             cascades = db.cascade_counts(self._db, self.spec, keys)
         except DbError:

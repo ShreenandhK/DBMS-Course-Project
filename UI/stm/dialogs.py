@@ -16,7 +16,7 @@ def _join(parts: list[str]) -> str:
     return parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
 
 
-class _Dialog(QDialog):
+class BaseDialog(QDialog):
     def __init__(self, title: str, parent: QWidget | None) -> None:
         super().__init__(parent)
         self.setWindowTitle(title)
@@ -49,7 +49,7 @@ class _Dialog(QDialog):
         self.body.addLayout(row)
 
 
-class ConfirmDeleteDialog(_Dialog):
+class ConfirmDeleteDialog(BaseDialog):
     def __init__(
         self, spec: TableSpec, records: list[str], cascades: list[str], parent: QWidget | None = None
     ) -> None:
@@ -91,7 +91,7 @@ class ConfirmDeleteDialog(_Dialog):
         return frame
 
 
-class ErrorDialog(_Dialog):
+class ErrorDialog(BaseDialog):
     def __init__(self, title: str, message: str, detail: str = "", parent: QWidget | None = None) -> None:
         super().__init__(title, parent)
         self.message = message
@@ -105,7 +105,7 @@ class ErrorDialog(_Dialog):
         self.add_buttons(close)
 
 
-class QuestionDialog(_Dialog):
+class QuestionDialog(BaseDialog):
     def __init__(self, title: str, question: str, confirm_text: str, parent: QWidget | None = None) -> None:
         super().__init__(title, parent)
         self.add_text(question)

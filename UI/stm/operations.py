@@ -5,7 +5,8 @@ Rules checked here (see the knowledge file, section 7):
 - a transfer, dispatch or damage quantity does not exceed what the bin holds;
   stock reserved by PENDING transfers is not available to other transfers or dispatches;
 - a transfer only moves forward: PENDING -> IN_TRANSIT -> CONFIRMED, or to CANCELLED;
-  CONFIRMED and CANCELLED are final.
+  CONFIRMED and CANCELLED are final;
+- deleting a record never leaves a bin with negative stock.
 
 Rules are checked before the write transaction starts. Each workflow then writes
 its header and lines in a single transaction. This module holds no SQL.
@@ -141,6 +142,64 @@ def check_insert(database: Database, spec: schema.TableSpec, values: dict[str, A
         check_stock(database, [_line(values, "source_bin_id")], respect_reservations=True)
     elif spec is schema.DAMAGED:
         check_stock(database, [_line(values, "bin_id")], respect_reservations=False)
+
+
+def check_delete(database: Database, spec: schema.TableSpec, rows: Sequence[dict[str, Any]]) -> None:
+    """Refuse a delete that would leave any bin with negative stock.
+
+    Deleting a record undoes its movement. Removing a receipt (line) or a confirmed transfer
+    takes stock back out of a bin; if that stock was already dispatched, transferred or written
+    off, the bin would go below zero.
+    """
+    change: dict[tuple[int, int], int] = defaultdict(int)
+    for row in rows:
+        for bin_id, product_id, delta in _stock_change_if_deleted(database, spec, row):
+            change[(bin_id, product_id)] += delta
+    for (bin_id, product_id), delta in change.items():
+        if delta >= 0:
+            continue
+        on_hand = db.stock_position(database, bin_id, product_id).on_hand
+        if on_hand + delta < 0:
+            location = db.bin_location(database, bin_id)
+            product = db.product_row(database, product_id)
+            bin_code = location["bin_code"] if location else f"bin {bin_id}"
+            sku = product["sku"] if product else f"product {product_id}"
+            raise RuleError(
+                f"Deleting this would leave {bin_code} with {on_hand + delta:,} of {sku} "
+                f"({on_hand:,} on hand now, {-delta:,} would be taken out). Some of this stock has already "
+                "been dispatched, transferred or written off; delete or reverse those records first."
+            )
+
+
+def _stock_change_if_deleted(
+    database: Database, spec: schema.TableSpec, row: dict[str, Any]
+) -> list[tuple[int, int, int]]:
+    """(bin_id, product_id, change in on-hand) caused by deleting one record."""
+    if spec is schema.RECEIPT_LINE:
+        return [(row["bin_id"], row["product_id"], -row["quantity"])]
+    if spec is schema.RECEIPT:
+        return [
+            (line["bin_id"], line["product_id"], -line["quantity"])
+            for line in db.receipt_lines(database, row["receipt_id"])
+        ]
+    if spec is schema.TRANSFER_LINE:
+        return _transfer_line_change(row["status"], row)
+    if spec is schema.TRANSFER:
+        return [
+            change
+            for line in db.transfer_lines(database, row["transfer_id"])
+            for change in _transfer_line_change(row["status"], line)
+        ]
+    return []  # dispatches and damage only ever add stock back when deleted
+
+
+def _transfer_line_change(status: str, line: dict[str, Any]) -> list[tuple[int, int, int]]:
+    changes = []
+    if status in ("IN_TRANSIT", "CONFIRMED"):
+        changes.append((line["source_bin_id"], line["product_id"], line["quantity"]))
+    if status == "CONFIRMED" and line.get("dest_bin_id") is not None:
+        changes.append((line["dest_bin_id"], line["product_id"], -line["quantity"]))
+    return changes
 
 
 def _line(values: dict[str, Any], bin_column: str) -> Line:

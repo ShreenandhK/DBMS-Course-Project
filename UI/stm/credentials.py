@@ -36,9 +36,10 @@ def load() -> SavedLogin:
         user=str(settings.value("user", DEFAULT_INFO.user)),
         database=str(settings.value("database", DEFAULT_INFO.database)),
     )
+    # Keep the box ticked even if the stored password has gone missing, so typing it once re-saves it.
     remember = str(settings.value("remember_password", "false")).lower() == "true"
     password = _read_password(info) if remember else None
-    return SavedLogin(info, password or "", remember and password is not None)
+    return SavedLogin(info, password or "", remember)
 
 
 def save(info: ConnectionInfo, password: str, remember: bool) -> None:

@@ -4,7 +4,7 @@ from __future__ import annotations
 from stm import operations
 from stm.db import Database, DbError
 from stm.operations import RuleError
-from stm.page import mono_span
+from stm.page import mono_span, steps
 from stm.workflows.common import (
     PUTAWAY,
     FormGrid,
@@ -23,8 +23,10 @@ class ReceivePage(WorkflowPage):
         super().__init__(
             database,
             "Receive stock",
-            f"Posts a {mono_span('receipt')} and its {mono_span('receipt_line')} rows (put-away into bins) "
-            "in one transaction.",
+            "Record goods arriving from a supplier and put them into bins.",
+            steps("Choose the supplier and warehouse", "Add a line for each bin and product", "Post receipt")
+            + f"&nbsp;&nbsp;&nbsp;·&nbsp;&nbsp;&nbsp;Writes {mono_span('receipt')} + {mono_span('receipt_line')}"
+            " in one transaction",
         )
         self._supplier = option_combo("Select supplier…")
         self._warehouse = option_combo("Select warehouse…")

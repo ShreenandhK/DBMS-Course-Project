@@ -553,6 +553,13 @@ def open_transfers(reader: Database | Transaction) -> list[Row]:
     )
 
 
+def receipt_lines(reader: Database | Transaction, receipt_id: int) -> list[Row]:
+    return reader.query(
+        "SELECT receipt_id, bin_id, product_id, quantity FROM receipt_line WHERE receipt_id = %s",
+        (receipt_id,),
+    )
+
+
 def transfer_lines(reader: Database | Transaction, transfer_id: int) -> list[Row]:
     return reader.query(
         """SELECT tl.transfer_id, tl.source_bin_id, sb.bin_code AS source_bin_code,

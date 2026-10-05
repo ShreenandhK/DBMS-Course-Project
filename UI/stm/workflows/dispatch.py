@@ -6,7 +6,7 @@ from PySide6.QtWidgets import QLineEdit
 from stm import db, operations
 from stm.db import Database, DbError
 from stm.operations import RuleError
-from stm.page import mono_span
+from stm.page import mono_span, steps
 from stm.workflows.common import (
     PICK,
     FormGrid,
@@ -25,8 +25,10 @@ class DispatchPage(WorkflowPage):
         super().__init__(
             database,
             "Dispatch stock",
-            f"Posts a {mono_span('dispatch')} and its {mono_span('dispatch_line')} rows in one transaction. "
-            "Only stock on hand and not reserved by pending transfers can be picked.",
+            "Send stock out of a warehouse to a customer. Stock reserved for pending transfers cannot be picked.",
+            steps("Choose the warehouse and destination", "Pick stock and quantities", "Post dispatch")
+            + f"&nbsp;&nbsp;&nbsp;·&nbsp;&nbsp;&nbsp;Writes {mono_span('dispatch')} + {mono_span('dispatch_line')}"
+            " in one transaction",
         )
         self._warehouse = option_combo("Select warehouse…")
         self._destination = QLineEdit()

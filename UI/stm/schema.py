@@ -73,7 +73,7 @@ class TableSpec:
     name: str
     title: str
     singular: str
-    group: str
+    description: str
     primary_key: tuple[str, ...]
     grid: tuple[GridColumn, ...]
     describe: Callable[[Row], str]
@@ -122,7 +122,7 @@ SUPPLIER = TableSpec(
     name="supplier",
     title="Suppliers",
     singular="supplier",
-    group="Master data",
+    description="Companies that deliver stock.",
     primary_key=("supplier_id",),
     auto_key=True,
     grid=(
@@ -141,7 +141,7 @@ PRODUCT = TableSpec(
     name="product",
     title="Products",
     singular="product",
-    group="Master data",
+    description="Items that are stocked, with their SKU and reorder level.",
     primary_key=("product_id",),
     auto_key=True,
     grid=(
@@ -169,7 +169,7 @@ WAREHOUSE = TableSpec(
     name="warehouse",
     title="Warehouses",
     singular="warehouse",
-    group="Locations",
+    description="The sites where stock is kept.",
     primary_key=("warehouse_id",),
     auto_key=True,
     grid=(
@@ -188,7 +188,7 @@ ZONE = TableSpec(
     name="zone",
     title="Zones",
     singular="zone",
-    group="Locations",
+    description="Areas inside a warehouse, such as Bulk Storage or Fast-Pick.",
     primary_key=("zone_id",),
     auto_key=True,
     grid=(
@@ -207,7 +207,7 @@ BIN = TableSpec(
     name="bin",
     title="Bins",
     singular="bin",
-    group="Locations",
+    description="Storage locations inside a zone; each has a unique bin code.",
     primary_key=("bin_id",),
     auto_key=True,
     grid=(
@@ -227,7 +227,7 @@ RECEIPT = TableSpec(
     name="receipt",
     title="Receipts",
     singular="receipt",
-    group="Movements",
+    description="Delivery headers: which supplier delivered to which warehouse, and when.",
     primary_key=("receipt_id",),
     auto_key=True,
     grid=(
@@ -248,7 +248,7 @@ RECEIPT_LINE = TableSpec(
     name="receipt_line",
     title="Receipt lines",
     singular="receipt line",
-    group="Movements",
+    description="What each delivery contained and the bin it was put into.",
     primary_key=("receipt_id", "bin_id", "product_id"),
     grid=(
         GridColumn("receipt_id", "Receipt", ID),
@@ -270,7 +270,7 @@ TRANSFER = TableSpec(
     name="transfer",
     title="Transfers",
     singular="transfer",
-    group="Movements",
+    description="Transfer headers: from which warehouse to which, and their status.",
     primary_key=("transfer_id",),
     auto_key=True,
     grid=(
@@ -298,7 +298,7 @@ TRANSFER_LINE = TableSpec(
     name="transfer_line",
     title="Transfer lines",
     singular="transfer line",
-    group="Movements",
+    description="What each transfer moves, the bin it is taken from and the bin it goes into.",
     primary_key=("transfer_id", "source_bin_id", "product_id"),
     grid=(
         GridColumn("transfer_id", "Transfer", ID),
@@ -332,7 +332,7 @@ DISPATCH = TableSpec(
     name="dispatch",
     title="Dispatches",
     singular="dispatch",
-    group="Movements",
+    description="Shipment headers: which warehouse shipped to which customer, and when.",
     primary_key=("dispatch_id",),
     auto_key=True,
     grid=(
@@ -353,7 +353,7 @@ DISPATCH_LINE = TableSpec(
     name="dispatch_line",
     title="Dispatch lines",
     singular="dispatch line",
-    group="Movements",
+    description="What each shipment contained and the bin it was picked from.",
     primary_key=("dispatch_id", "bin_id", "product_id"),
     grid=(
         GridColumn("dispatch_id", "Dispatch", ID),
@@ -373,9 +373,9 @@ DISPATCH_LINE = TableSpec(
 
 DAMAGED = TableSpec(
     name="damaged",
-    title="Damaged stock",
+    title="Damage records",
     singular="damage record",
-    group="Stock",
+    description="Units written off as damaged, per bin, product and date.",
     primary_key=("bin_id", "product_id", "damage_date"),
     grid=(
         GridColumn("bin_code", "Bin", CODE),
@@ -399,7 +399,7 @@ BIN_STOCK = TableSpec(
     name="v_bin_stock",
     title="Bin stock",
     singular="bin stock row",
-    group="Stock",
+    description="Current stock in every bin, calculated from all movements (read-only).",
     primary_key=("bin_id", "product_id"),
     is_view=True,
     grid=(
@@ -433,10 +433,4 @@ TABLES: tuple[TableSpec, ...] = (
     SUPPLIER,
 )
 
-GROUP_ORDER: tuple[str, ...] = ("Stock", "Movements", "Locations", "Master data")
-
 BY_NAME: dict[str, TableSpec] = {spec.name: spec for spec in TABLES}
-
-
-def grouped() -> list[tuple[str, list[TableSpec]]]:
-    return [(group, [spec for spec in TABLES if spec.group == group]) for group in GROUP_ORDER]

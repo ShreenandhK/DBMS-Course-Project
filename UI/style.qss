@@ -67,6 +67,10 @@ QLabel[role="muted"] {
 QLabel[role="faint"] {
     color: #8A949E;
 }
+QLabel[role="pageDetail"] {
+    color: #7A858F;
+    font-size: 9pt;
+}
 QLabel[role="fieldLabel"] {
     color: #4A5560;
 }
@@ -121,6 +125,10 @@ QWidget#WorkflowBody {
 QScrollArea#WorkflowScroll {
     background: #F4F5F7;
     border: none;
+}
+QWidget#ActionBar {
+    background: #FFFFFF;
+    border-top: 1px solid #D9DDE2;
 }
 QFrame#Section {
     background: #FFFFFF;

@@ -38,7 +38,13 @@ class BinSearchPage(Page):
         self._text.setFixedWidth(320)
         self._include_empty = QCheckBox("Include empty bins")
         self._summary = label("", "muted")
-        self.grid = DataGrid(_COLUMNS, lambda row: (row["bin_id"], row["product_id"]), refit=True)
+        self.grid = DataGrid(
+            _COLUMNS,
+            lambda row: (row["bin_id"], row["product_id"]),
+            refit=True,
+            empty_text="No bins match. Try part of a bin code (HYD-BS), a SKU or a product name, "
+            "or tick Include empty bins.",
+        )
         self._debounce = QTimer(self)
         self._debounce.setSingleShot(True)
         self._debounce.setInterval(250)
@@ -50,13 +56,22 @@ class BinSearchPage(Page):
         filters.addWidget(self._include_empty)
         filters.addStretch(1)
         filters.addWidget(self._summary)
-        subtitle = (
-            f"Searches {mono_span('bin')} joined to {mono_span('v_bin_stock')}. Reserved = held by PENDING transfers."
+        detail = (
+            "Reserved = promised to pending transfers.&nbsp;&nbsp;Available = on hand − reserved."
+            f"&nbsp;&nbsp;&nbsp;·&nbsp;&nbsp;&nbsp;Reads {mono_span('bin')} joined to {mono_span('v_bin_stock')}"
         )
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        layout.addWidget(page_header("Bin search", subtitle, None, filters))
+        layout.addWidget(
+            page_header(
+                "Bin search",
+                "Find bins and what they hold by bin code, zone, SKU or product name.",
+                None,
+                filters,
+                detail,
+            )
+        )
         layout.addWidget(self.grid, 1)
 
         self._debounce.timeout.connect(self.search)

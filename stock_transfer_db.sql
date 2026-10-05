@@ -414,3 +414,86 @@ INSERT INTO Dispatch_Line (dispatch_id, bin_id, product_id, quantity) VALUES
 INSERT INTO Damaged (bin_id, product_id, damage_date, quantity, reason) VALUES
     (3, 1, '2026-08-04', 24, 'Cartons crushed during unloading'),
     (8, 3, '2026-08-12', 12, 'Pipes cracked by forklift impact');
+
+-- =====================================================================
+-- EXTENDED SAMPLE DATA (21 Aug - 4 Oct 2026)
+-- More suppliers, products and movements, with transfers in every status,
+-- so the reports (warehouse stock, stock ageing, bin utilization, damage,
+-- reorder needs) have realistic data. Every row respects the business
+-- rules: bins belong to the document's warehouse, movements are dated in
+-- order, and no bin goes below zero.
+-- =====================================================================
+
+INSERT INTO Supplier (supplier_id, name, contact) VALUES
+    (5, 'Nilgiri Cables & Wires',       '+91 422 245 7781'),
+    (6, 'Godavari Sanitary Fittings',   '+91 891 276 4410'),
+    (7, 'Malwa Switchgear Pvt Ltd',     '+91 731 249 3367');
+
+INSERT INTO Product (product_id, name, sku, reorder_level) VALUES
+    ( 8, 'Distribution Board 8-Way',     'ELE-DB-008',    20),
+    ( 9, 'MCB 32A Single Pole',          'ELE-MCB-032',  100),
+    (10, 'CPVC Elbow 1in (Pack of 10)',  'PLB-ELB-025',   80),
+    (11, 'Ball Valve 1in Brass',         'PLB-VAL-025',   80),
+    (12, 'Enamel Paint 1L Black',        'PNT-BLK-001',   50),
+    (13, 'Hammer Drill Bit Set 5pc',     'TLS-BIT-005',   25);
+
+-- Receipts -- 6 headers + 12 lines
+INSERT INTO Receipt (receipt_id, receipt_date, supplier_id, warehouse_id) VALUES
+    (4, '2026-08-21', 5, 1),
+    (5, '2026-08-26', 6, 2),
+    (6, '2026-09-02', 7, 3),
+    (7, '2026-09-10', 4, 1),
+    (8, '2026-09-18', 3, 2),
+    (9, '2026-09-29', 1, 3);
+
+INSERT INTO Receipt_Line (receipt_id, bin_id, product_id, quantity) VALUES
+    (4,  5,  4, 120),   -- Copper wire   -> HYD-BS-03
+    (4,  6,  9, 400),   -- MCBs          -> HYD-FP-01
+    (5, 10, 10, 300),   -- CPVC elbows   -> BLR-BS-03
+    (5, 11, 11,  90),   -- Ball valves   -> BLR-FP-01
+    (6, 14,  8,  60),   -- Dist. boards  -> PUN-BS-02
+    (6, 15,  2,  35),   -- Ceiling fans  -> PUN-BS-03
+    (7,  7,  6,  40),   -- Drills        -> HYD-FP-02
+    (7,  7, 13,  70),   -- Drill bits    -> HYD-FP-02
+    (8, 12, 12, 180),   -- Enamel paint  -> BLR-FP-02
+    (8, 12,  5,  80),   -- Wall paint    -> BLR-FP-02
+    (9, 13,  1, 400),   -- LED bulbs     -> PUN-BS-01
+    (9, 13,  7, 600);   -- Switches      -> PUN-BS-01
+
+-- Transfers -- 5 headers + 5 lines, covering every status
+INSERT INTO Transfer (transfer_id, status, transfer_date, source_warehouse_id, dest_warehouse_id) VALUES
+    (4, 'CONFIRMED',  '2026-08-28', 1, 2),
+    (5, 'CONFIRMED',  '2026-09-08', 2, 3),
+    (6, 'CANCELLED',  '2026-09-15', 2, 1),
+    (7, 'IN_TRANSIT', '2026-09-22', 1, 3),
+    (8, 'PENDING',    '2026-10-01', 3, 1);
+
+INSERT INTO Transfer_Line (transfer_id, source_bin_id, product_id, dest_bin_id, quantity) VALUES
+    (4,  5,  4,   10,  40),   -- Copper wire  HYD-BS-03 -> BLR-BS-03 (received)
+    (5, 11, 11,   15,  30),   -- Ball valves  BLR-FP-01 -> PUN-BS-03 (received)
+    (6, 10, 10, NULL,  50),   -- CPVC elbows  BLR-BS-03 -> Hyderabad (cancelled, no stock effect)
+    (7,  6,  9, NULL, 150),   -- MCBs         HYD-FP-01 -> Pune (on the road)
+    (8, 14,  8, NULL,  15);   -- Dist. boards PUN-BS-02 -> Hyderabad (not yet shipped)
+
+-- Dispatches -- 4 headers + 8 lines
+INSERT INTO Dispatch (dispatch_id, destination, dispatch_date, warehouse_id) VALUES
+    (3, 'Sri Sai Electricals, Kukatpally, Hyderabad',  '2026-09-05', 1),
+    (4, 'Lakeview Interiors, Whitefield, Bengaluru',   '2026-09-14', 2),
+    (5, 'Om Sai Builders, Hinjewadi, Pune',            '2026-09-25', 3),
+    (6, 'Green Leaf Residency, Hebbal, Bengaluru',     '2026-10-03', 2);
+
+INSERT INTO Dispatch_Line (dispatch_id, bin_id, product_id, quantity) VALUES
+    (3,  5,  4,  30),
+    (3,  6,  9, 120),
+    (4, 10, 10, 120),
+    (4, 11, 11,  25),
+    (5, 14,  8,  20),
+    (5, 15,  2,  12),
+    (6, 12, 12,  60),
+    (6, 12,  5,  25);
+
+-- Damage events -- 3 rows
+INSERT INTO Damaged (bin_id, product_id, damage_date, quantity, reason) VALUES
+    ( 7,  6, '2026-09-12', 2, 'Battery packs swollen on arrival'),
+    (15,  2, '2026-09-27', 3, 'Fan blades bent in transit'),
+    (12, 12, '2026-10-04', 6, 'Tins dented, lids leaking');

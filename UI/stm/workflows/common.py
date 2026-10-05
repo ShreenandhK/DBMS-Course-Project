@@ -5,7 +5,7 @@ from collections.abc import Callable, Sequence
 from datetime import date
 from typing import Any
 
-from PySide6.QtCore import QDate, Signal
+from PySide6.QtCore import QDate, Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QDateEdit,
@@ -30,9 +30,12 @@ from stm.widgets import Banner, button, field_error_label, label, set_style_prop
 
 
 class WorkflowPage(Page):
-    """Header, a scrollable body of sections, a banner for errors and a footer with actions."""
+    """Header, a scrollable body of sections, and a fixed action bar (error banner + buttons).
 
-    def __init__(self, database: Database, title: str, subtitle: str) -> None:
+    The action bar stays outside the scroll area so the buttons are always visible.
+    """
+
+    def __init__(self, database: Database, title: str, subtitle: str, detail: str = "") -> None:
         super().__init__()
         self.db = database
         self.title = title
@@ -53,16 +56,24 @@ class WorkflowPage(Page):
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setWidget(body)
 
+        action_bar = QWidget()
+        action_bar.setObjectName("ActionBar")
+        action_bar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        bar_layout = QVBoxLayout(action_bar)
+        bar_layout.setContentsMargins(20, 10, 20, 10)
+        bar_layout.setSpacing(8)
+        bar_layout.addWidget(self.banner)
+        bar_layout.addLayout(self.footer)
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        layout.addWidget(page_header(title, subtitle))
+        layout.addWidget(page_header(title, subtitle, detail=detail))
         layout.addWidget(scroll, 1)
+        layout.addWidget(action_bar)
 
     def finish_layout(self) -> None:
-        """Call after adding sections: appends the banner and the footer."""
-        self.body.addWidget(self.banner)
-        self.body.addLayout(self.footer)
+        """Call after adding sections."""
         self.body.addStretch(1)
 
     def add_section(self, title: str) -> QVBoxLayout:
@@ -218,7 +229,13 @@ class LineEditor(QWidget):
         ]
         if mode == PICK:
             columns.append(GridColumn("available", "Available", NUMBER))
-        self.grid = DataGrid(columns, lambda row: (row["bin_id"], row["product_id"]), refit=True)
+        hint = "the stock to pick" if mode == PICK else "a bin and a product"
+        self.grid = DataGrid(
+            columns,
+            lambda row: (row["bin_id"], row["product_id"]),
+            refit=True,
+            empty_text=f"No lines yet. Choose {hint} above, enter a quantity and press Add line.",
+        )
         self.grid.setMinimumHeight(150)
         self.grid.setSortingEnabled(False)
 

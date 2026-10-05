@@ -11,7 +11,7 @@ from stm.db import Database, DbError
 from stm.dialogs import ask
 from stm.grid import DataGrid
 from stm.operations import ALLOWED_TRANSITIONS, RuleError
-from stm.page import mono_span
+from stm.page import mono_span, steps
 from stm.schema import CODE, DATE, ID, NUMBER, STATUS, GridColumn, Row
 from stm.widgets import label, set_style_property
 from stm.workflows.common import (
@@ -32,8 +32,10 @@ class NewTransferPage(WorkflowPage):
         super().__init__(
             database,
             "New transfer",
-            f"Creates a PENDING {mono_span('transfer')} with its {mono_span('transfer_line')} rows. "
-            "Stock stays in the source bins, reserved, until the transfer ships.",
+            "Start moving stock to another warehouse. Until it ships, the stock stays in its bin, reserved.",
+            steps("Choose From and To warehouse", "Pick stock and quantities", "Create transfer")
+            + "&nbsp;&nbsp;&nbsp;·&nbsp;&nbsp;&nbsp;Then ship and confirm it in Process transfers"
+            + f"&nbsp;&nbsp;&nbsp;·&nbsp;&nbsp;&nbsp;Writes {mono_span('transfer')} + {mono_span('transfer_line')}",
         )
         self._source = option_combo("Select source…")
         self._dest = option_combo("Select destination…")
@@ -130,20 +132,30 @@ class ProcessTransfersPage(WorkflowPage):
         super().__init__(
             database,
             "Process transfers",
-            f"Ship, put away and confirm open transfers. Updates {mono_span('transfer.status')} and "
-            f"{mono_span('transfer_line.dest_bin_id')}.",
+            "Ship, put away and confirm transfers that are still open.",
+            steps(
+                "Select a transfer",
+                "Mark in transit when it leaves",
+                "Choose a destination bin for each line",
+                "Confirm receipt when it arrives",
+            )
+            + f"&nbsp;&nbsp;&nbsp;·&nbsp;&nbsp;&nbsp;Updates {mono_span('transfer.status')}, "
+            f"{mono_span('transfer_line.dest_bin_id')}",
         )
         self._lines_data: list[Row] = []
         self._dest_options: list[Any] = []
 
-        self._open = DataGrid(_OPEN_COLUMNS, lambda row: (row["transfer_id"],), refit=True)
+        self._open = DataGrid(
+            _OPEN_COLUMNS,
+            lambda row: (row["transfer_id"],),
+            refit=True,
+            empty_text="No open transfers. Start one in New transfer.",
+        )
         self._open.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._open.setMinimumHeight(140)
         self._open.setMaximumHeight(200)
-        self._empty = label("No open transfers. Create one in New transfer.", "muted")
         open_section = self.add_section("Open transfers (PENDING and IN_TRANSIT)")
         open_section.addWidget(self._open)
-        open_section.addWidget(self._empty)
 
         self._title = label("Select a transfer above.", "fieldLabel")
         self._table = self._build_line_table()
@@ -191,7 +203,6 @@ class ProcessTransfersPage(WorkflowPage):
             self.show_error(err)
             return
         self._open.set_rows(rows, [(keep,)] if keep else [])
-        self._empty.setVisible(not rows)
         if not self._open.selected_rows() and rows:
             self._open.select_row(0)
         self._load_lines()

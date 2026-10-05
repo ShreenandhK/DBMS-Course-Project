@@ -32,15 +32,18 @@ class Sidebar(QListWidget):
         self.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
         self.currentItemChanged.connect(self._on_current_changed)
 
-    def add_group(self, title: str, entries: list[tuple[str, str]]) -> None:
+    def add_group(self, title: str, tooltip: str, entries: list[tuple[str, str, str]]) -> None:
+        """Add a group heading and its (key, label, tooltip) entries."""
         header = QListWidgetItem(title.upper())
         header.setData(KIND_ROLE, HEADER)
         header.setFlags(Qt.ItemFlag.NoItemFlags)
+        header.setToolTip(tooltip)
         self.addItem(header)
-        for key, label in entries:
+        for key, label, entry_tooltip in entries:
             item = QListWidgetItem(label)
             item.setData(KIND_ROLE, ENTRY)
             item.setData(KEY_ROLE, key)
+            item.setToolTip(entry_tooltip)
             self.addItem(item)
 
     def select(self, key: str) -> None:

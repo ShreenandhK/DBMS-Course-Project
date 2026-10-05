@@ -7,7 +7,7 @@ from stm import db, operations, schema
 from stm.db import Database, DbError
 from stm.grid import DataGrid
 from stm.operations import Line, RuleError
-from stm.page import mono_span
+from stm.page import mono_span, steps
 from stm.record_dialog import parse_int
 from stm.workflows.common import (
     FormGrid,
@@ -27,8 +27,9 @@ class DamagePage(WorkflowPage):
         super().__init__(
             database,
             "Record damage",
-            f"Inserts a {mono_span('damaged')} row. Damaged units leave usable stock in {mono_span('v_bin_stock')}; "
-            "the quantity cannot exceed what the bin holds.",
+            "Write off damaged units from a bin; they no longer count as stock.",
+            steps("Choose the warehouse, bin and product", "Enter quantity and reason", "Record damage")
+            + f"&nbsp;&nbsp;&nbsp;·&nbsp;&nbsp;&nbsp;Writes {mono_span('damaged')}",
         )
         self._warehouse = option_combo("Select warehouse…")
         self._stock = option_combo("Select bin and product…")
@@ -47,7 +48,9 @@ class DamagePage(WorkflowPage):
         self._form.add("reason", "Reason", self._reason)
         self.add_section("Damage").addLayout(self._form)
 
-        self._recent = DataGrid(schema.DAMAGED.grid, schema.DAMAGED.key_of, refit=True)
+        self._recent = DataGrid(
+            schema.DAMAGED.grid, schema.DAMAGED.key_of, refit=True, empty_text="No damage recorded yet."
+        )
         self._recent.setMinimumHeight(140)
         self.add_section("Damage records").addWidget(self._recent)
 
