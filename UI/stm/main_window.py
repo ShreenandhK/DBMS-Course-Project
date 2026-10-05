@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
+from PySide6.QtGui import QAction, QCloseEvent, QGuiApplication, QKeySequence
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QMainWindow, QStackedWidget, QWidget
 
 from stm import APP_NAME, db, schema
@@ -11,7 +11,7 @@ from stm.db import Database, DbError
 from stm.sidebar import Sidebar
 from stm.table_page import TablePage
 
-FIRST_PAGE = "transfer"
+FIRST_PAGE = "v_bin_stock"
 
 
 class MainWindow(QMainWindow):
@@ -20,7 +20,8 @@ class MainWindow(QMainWindow):
         self._db = database
         self._pages: dict[str, TablePage] = {}
         self.setWindowTitle(APP_NAME)
-        self.resize(1360, 820)
+        available = QGuiApplication.primaryScreen().availableGeometry()
+        self.resize(min(1360, int(available.width() * 0.92)), min(820, int(available.height() * 0.9)))
 
         self._sidebar = Sidebar()
         self._stack = QStackedWidget()

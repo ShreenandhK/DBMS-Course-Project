@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 from PySide6.QtCore import QItemSelection, QItemSelectionModel, Qt, Signal
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtGui import QAction, QFont, QFontMetrics, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from stm import db
+from stm import db, theme
 from stm.db import Database, DbError
 from stm.dialogs import ConfirmDeleteDialog, show_error
 from stm.record_dialog import RecordDialog
@@ -24,8 +24,10 @@ from stm.schema import Row, Style, TableSpec
 from stm.table_model import RecordFilterProxy, RecordModel, StatusChipDelegate
 from stm.widgets import button, label
 
-MIN_COLUMN_WIDTH = 72
+MIN_COLUMN_WIDTH = 56
 MAX_COLUMN_WIDTH = 380
+HEADER_PADDING = 18
+COLUMN_SLACK = 4
 ROW_HEIGHT = 28
 
 
@@ -46,6 +48,7 @@ class TablePage(QWidget):
         self._view = self._build_view()
         self._filter_column = QComboBox()
         self._filter = QLineEdit()
+        self._summary = label("", "muted")
         self._refresh_button = button("Refresh", tooltip="Reload from the database (F5)")
         self._new_button = button("New", "primary", tooltip=f"Insert a new {spec.singular} (Ctrl+N)")
         self._new_button.setVisible(spec.can_insert)
@@ -122,6 +125,7 @@ class TablePage(QWidget):
         filters.addWidget(self._filter_column)
         filters.addWidget(self._filter)
         filters.addStretch(1)
+        filters.addWidget(self._summary)
 
         header = QWidget()
         header.setObjectName("PageHeader")
@@ -273,10 +277,13 @@ class TablePage(QWidget):
         self._proxy.set_filter(self._filter.text(), int(self._filter_column.currentData()))
 
     def _fit_columns(self) -> None:
-        self._view.resizeColumnsToContents()
+        # Sized by hand: resizeColumnsToContents() reserves room for a sort arrow the stylesheet hides.
         header = self._view.horizontalHeader()
-        for column in range(self._model.columnCount()):
-            width = header.sectionSize(column) + 16
+        header_metrics = QFontMetrics(theme.ui_font(9, QFont.Weight.DemiBold))
+        for column, spec in enumerate(self.spec.grid):
+            content = self._view.sizeHintForColumn(column)
+            title = header_metrics.horizontalAdvance(spec.label) + HEADER_PADDING
+            width = max(content, title) + COLUMN_SLACK
             header.resizeSection(column, max(MIN_COLUMN_WIDTH, min(MAX_COLUMN_WIDTH, width)))
         self._columns_fitted = self._model.rowCount() > 0
 
@@ -300,4 +307,18 @@ class TablePage(QWidget):
             self._view.scrollTo(first_visible, QAbstractItemView.ScrollHint.PositionAtCenter)
 
     def _emit_counts(self) -> None:
+        self._update_summary()
         self.counts_changed.emit(self.visible_count(), self.total_count())
+
+    def _update_summary(self) -> None:
+        summed = [(column, spec) for column, spec in enumerate(self.spec.grid) if spec.summed]
+        if not summed:
+            return
+        parts = []
+        for column, spec in summed:
+            total = sum(
+                self._model.row_data(self._proxy.mapToSource(self._proxy.index(row, column)).row()).get(spec.key) or 0
+                for row in range(self._proxy.rowCount())
+            )
+            parts.append(f"{spec.label} total  <b>{total:,}</b>")
+        self._summary.setText("&nbsp;&nbsp;·&nbsp;&nbsp;".join(parts))

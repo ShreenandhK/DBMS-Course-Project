@@ -40,6 +40,8 @@ class GridColumn:
     key: str
     label: str
     style: Style = Style.TEXT
+    strong: bool = False  # semibold, for the column a reader looks at first
+    summed: bool = False  # total of visible rows shown above the grid
 
 
 @dataclass(frozen=True)
@@ -378,7 +380,7 @@ DAMAGED = TableSpec(
         GridColumn("sku", "SKU", CODE),
         GridColumn("product_name", "Product"),
         GridColumn("damage_date", "Date", DATE),
-        GridColumn("quantity", "Quantity", NUMBER),
+        GridColumn("quantity", "Quantity", NUMBER, summed=True),
         GridColumn("reason", "Reason"),
     ),
     fields=(
@@ -391,7 +393,30 @@ DAMAGED = TableSpec(
     describe=lambda r: f"damage record: {_qty(r)} × {r['sku']} in {r['bin_code']} on {r['damage_date']}",
 )
 
+BIN_STOCK = TableSpec(
+    name="v_bin_stock",
+    title="Bin stock",
+    singular="bin stock row",
+    group="Stock",
+    primary_key=("bin_id", "product_id"),
+    is_view=True,
+    grid=(
+        GridColumn("warehouse_name", "Warehouse"),
+        GridColumn("bin_code", "Bin", CODE),
+        GridColumn("sku", "SKU", CODE),
+        GridColumn("product_name", "Product"),
+        GridColumn("on_hand", "On hand", NUMBER, strong=True, summed=True),
+        GridColumn("received", "Received", NUMBER),
+        GridColumn("transferred_in", "Transfer in", NUMBER),
+        GridColumn("transferred_out", "Transfer out", NUMBER),
+        GridColumn("dispatched", "Dispatched", NUMBER),
+        GridColumn("damaged", "Damaged", NUMBER),
+    ),
+    describe=lambda r: f"{r['sku']} in {r['bin_code']}",
+)
+
 TABLES: tuple[TableSpec, ...] = (
+    BIN_STOCK,
     DAMAGED,
     RECEIPT,
     RECEIPT_LINE,

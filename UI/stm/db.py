@@ -290,6 +290,11 @@ _LIST_SQL: dict[str, str] = {
         JOIN bin b ON b.bin_id = dm.bin_id
         JOIN product p ON p.product_id = dm.product_id
         ORDER BY dm.damage_date, b.bin_code, p.sku""",
+    "v_bin_stock": """
+        SELECT warehouse_id, warehouse_name, zone_name, bin_id, bin_code, product_id, sku,
+               product_name, received, transferred_in, transferred_out, dispatched, damaged, on_hand
+        FROM v_bin_stock
+        ORDER BY warehouse_id, bin_code, sku""",
 }
 
 _COUNT_SQL = """
@@ -304,7 +309,8 @@ _COUNT_SQL = """
            (SELECT COUNT(*) FROM transfer_line) AS transfer_line,
            (SELECT COUNT(*) FROM dispatch)      AS dispatch,
            (SELECT COUNT(*) FROM dispatch_line) AS dispatch_line,
-           (SELECT COUNT(*) FROM damaged)       AS damaged"""
+           (SELECT COUNT(*) FROM damaged)       AS damaged,
+           (SELECT COUNT(*) FROM v_bin_stock)   AS v_bin_stock"""
 
 
 def list_rows(db: Database, table: str) -> list[Row]:

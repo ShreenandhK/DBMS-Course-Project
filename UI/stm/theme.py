@@ -13,6 +13,7 @@ TEXT_FAINT = QColor("#98A1AA")
 SIDEBAR_HOVER = QColor("#E4E7EB")
 SIDEBAR_SELECTED = QColor("#DCE6EC")
 SELECTED_TEXT = QColor("#0E3D52")
+NEGATIVE = QColor("#A33A3A")
 
 # Transfer status chips: (background, foreground).
 STATUS_COLORS: dict[str, tuple[QColor, QColor]] = {

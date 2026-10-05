@@ -144,7 +144,8 @@ class RecordDialog(QDialog):
         self._cancel.clicked.connect(self.reject)
         for editor in self._editors:
             editor.on_change(lambda *_signal_args, e=editor: self._clear_error(e))
-        self._editors[0].widget.setFocus()
+        if self._editors:
+            self._editors[0].widget.setFocus()
 
     def _options_for(self, field: Field) -> list[Option] | None:
         if field.kind is not Kind.REFERENCE or field.reference is None:

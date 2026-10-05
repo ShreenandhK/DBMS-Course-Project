@@ -62,7 +62,7 @@ def main() -> int:
     if login.exec() != QDialog.DialogCode.Accepted or login.database is None:
         return 0
     window = MainWindow(login.database)
-    window.show()
+    window.showMaximized()
     return app.exec()
 
 

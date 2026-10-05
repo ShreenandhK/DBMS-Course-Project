@@ -25,7 +25,7 @@ class Sidebar(QListWidget):
     def __init__(self, parent: Any = None) -> None:
         super().__init__(parent)
         self.setObjectName("Sidebar")
-        self.setFixedWidth(228)
+        self.setFixedWidth(208)
         self.setItemDelegate(_SidebarDelegate(self))
         self.setMouseTracking(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)

@@ -58,6 +58,7 @@ class RecordModel(QAbstractTableModel):
         self._columns = tuple(columns)
         self._rows: list[Row] = []
         self._mono = theme.mono_font()
+        self._strong = theme.ui_font(10, QFont.Weight.DemiBold)
 
     def set_rows(self, rows: list[Row]) -> None:
         self.beginResetModel()
@@ -100,10 +101,15 @@ class RecordModel(QAbstractTableModel):
             return _sort_key(value, column.style)
         if role == Qt.ItemDataRole.TextAlignmentRole:
             return _RIGHT if column.style in _NUMERIC else _LEFT
-        if role == Qt.ItemDataRole.FontRole and column.style in _MONO:
-            return self._mono
-        if role == Qt.ItemDataRole.ForegroundRole and value is None:
-            return theme.TEXT_FAINT
+        if role == Qt.ItemDataRole.FontRole:
+            if column.style in _MONO:
+                return self._mono
+            return self._strong if column.strong else None
+        if role == Qt.ItemDataRole.ForegroundRole:
+            if value is None:
+                return theme.TEXT_FAINT
+            if isinstance(value, (int, float)) and value < 0:
+                return theme.NEGATIVE
         return None
 
 
