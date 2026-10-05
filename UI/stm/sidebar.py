@@ -63,8 +63,8 @@ class Sidebar(QListWidget):
 
 
 class _SidebarDelegate(QStyledItemDelegate):
-    HEADER_HEIGHT = 34
-    ENTRY_HEIGHT = 28
+    HEADER_HEIGHT = 30
+    ENTRY_HEIGHT = 26
     INDENT = 18
 
     def __init__(self, parent: Any = None) -> None:

@@ -16,8 +16,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from stm import db, theme
+from stm import db, operations, theme
 from stm.db import Database, DbError, Option
+from stm.operations import RuleError
 from stm.schema import MAX_INT, Field, Kind, TableSpec
 from stm.widgets import Banner, button, field_error_label, hairline, label, set_style_property, show_field_error
 
@@ -95,7 +96,7 @@ class FieldEditor:
         if not text:
             return None, "Required." if self.field.required else None
         if self.field.kind is Kind.INTEGER:
-            return _parse_int(text, self.field.minimum)
+            return parse_int(text, self.field.minimum)
         if self.field.max_length and len(text) > self.field.max_length:
             return None, f"At most {self.field.max_length} characters."
         return text, None
@@ -108,7 +109,8 @@ def _keep_upper(editor: QLineEdit, text: str) -> None:
         editor.setCursorPosition(position)
 
 
-def _parse_int(text: str, minimum: int | None) -> tuple[int | None, str | None]:
+def parse_int(text: str, minimum: int | None) -> tuple[int | None, str | None]:
+    """Parse a whole number typed by the user; return (value, error message)."""
     try:
         value = int(text.replace(",", ""))
     except ValueError:
@@ -231,19 +233,23 @@ class RecordDialog(QDialog):
             self._focus_first_error()
             return
         try:
+            operations.check_insert(self._db, self._spec, values)
             self.inserted_key = db.insert_row(self._db, self._spec, values)
+        except RuleError as err:
+            self._show_error(err.message, err.field, "Business rule checked by the application")
+            return
         except DbError as err:
-            self._show_db_error(err)
+            self._show_error(err.message, err.field, err.detail)
             return
         self.accept()
 
-    def _show_db_error(self, err: DbError) -> None:
-        target = next((e for e in self._editors if e.field.column == err.field), None)
+    def _show_error(self, message: str, column: str | None, detail: str) -> None:
+        target = next((e for e in self._editors if e.field.column == column), None)
         if target is not None:
-            target.set_error(err.message)
+            target.set_error(message)
             target.widget.setFocus()
         else:
-            self._banner.show_message(err.message, err.detail)
+            self._banner.show_message(message, detail)
 
     def _focus_first_error(self) -> None:
         for editor in self._editors:

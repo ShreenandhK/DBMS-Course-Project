@@ -310,7 +310,8 @@ _COUNT_SQL = """
            (SELECT COUNT(*) FROM dispatch)      AS dispatch,
            (SELECT COUNT(*) FROM dispatch_line) AS dispatch_line,
            (SELECT COUNT(*) FROM damaged)       AS damaged,
-           (SELECT COUNT(*) FROM v_bin_stock)   AS v_bin_stock"""
+           (SELECT COUNT(*) FROM v_bin_stock)   AS v_bin_stock,
+           (SELECT COUNT(*) FROM transfer WHERE status IN ('PENDING', 'IN_TRANSIT')) AS process_transfers"""
 
 
 def list_rows(db: Database, table: str) -> list[Row]:
@@ -391,8 +392,8 @@ def lookup(db: Database, name: str) -> list[Option]:
 # --- Writes ------------------------------------------------------------------
 
 
-def insert_row(db: Database, spec: TableSpec, values: dict[str, Any]) -> tuple[Any, ...]:
-    """Insert one row in its own transaction and return its primary key."""
+def insert_values(tx: Transaction, spec: TableSpec, values: dict[str, Any]) -> tuple[Any, ...]:
+    """Insert one row inside an open transaction and return its primary key."""
     allowed = {f.column for f in spec.fields}
     columns = [column for column in values if column in allowed]
     if len(columns) != len(values):
@@ -400,11 +401,199 @@ def insert_row(db: Database, spec: TableSpec, values: dict[str, Any]) -> tuple[A
     column_list = ", ".join(f"`{column}`" for column in columns)
     placeholders = ", ".join(["%s"] * len(columns))
     sql = f"INSERT INTO `{spec.name}` ({column_list}) VALUES ({placeholders})"
-    with db.transaction() as tx:
-        _, last_id = tx.execute(sql, [values[column] for column in columns])
+    _, last_id = tx.execute(sql, [values[column] for column in columns])
     if spec.auto_key:
         return (last_id,)
     return tuple(values[column] for column in spec.primary_key)
+
+
+def insert_row(db: Database, spec: TableSpec, values: dict[str, Any]) -> tuple[Any, ...]:
+    """Insert one row in its own transaction and return its primary key."""
+    with db.transaction() as tx:
+        return insert_values(tx, spec, values)
+
+
+def update_transfer_status(tx: Transaction, transfer_id: int, new_status: str, expected_status: str) -> bool:
+    """Move a transfer from ``expected_status`` to ``new_status``; False if it was no longer in that state."""
+    rowcount, _ = tx.execute(
+        "UPDATE transfer SET status = %s WHERE transfer_id = %s AND status = %s",
+        (new_status, transfer_id, expected_status),
+    )
+    return rowcount == 1
+
+
+def set_destination_bin(
+    tx: Transaction, transfer_id: int, source_bin_id: int, product_id: int, dest_bin_id: int | None
+) -> None:
+    tx.execute(
+        """UPDATE transfer_line SET dest_bin_id = %s
+           WHERE transfer_id = %s AND source_bin_id = %s AND product_id = %s""",
+        (dest_bin_id, transfer_id, source_bin_id, product_id),
+    )
+
+
+# --- Stock and workflow reads ------------------------------------------------
+# These accept a Database or an open Transaction (anything with .query).
+
+
+@dataclass(frozen=True)
+class StockPosition:
+    on_hand: int
+    reserved: int  # held by PENDING transfers, still counted in on_hand
+
+    @property
+    def available(self) -> int:
+        return self.on_hand - self.reserved
+
+
+_RESERVED_SUBQUERY = """
+    SELECT tl.source_bin_id AS bin_id, tl.product_id, SUM(tl.quantity) AS reserved
+    FROM transfer_line tl
+    JOIN transfer t ON t.transfer_id = tl.transfer_id
+    WHERE t.status = 'PENDING'
+    GROUP BY tl.source_bin_id, tl.product_id"""
+
+
+def stock_position(
+    reader: Database | Transaction, bin_id: int, product_id: int, exclude_transfer_id: int | None = None
+) -> StockPosition:
+    on_hand = reader.query(
+        "SELECT COALESCE(SUM(on_hand), 0) AS n FROM v_bin_stock WHERE bin_id = %s AND product_id = %s",
+        (bin_id, product_id),
+    )[0]["n"]
+    reserved = reader.query(
+        """SELECT COALESCE(SUM(tl.quantity), 0) AS n
+           FROM transfer_line tl
+           JOIN transfer t ON t.transfer_id = tl.transfer_id
+           WHERE t.status = 'PENDING' AND tl.source_bin_id = %s AND tl.product_id = %s
+             AND t.transfer_id <> %s""",
+        (bin_id, product_id, exclude_transfer_id or 0),
+    )[0]["n"]
+    return StockPosition(int(on_hand), int(reserved))
+
+
+def bin_location(reader: Database | Transaction, bin_id: int) -> Row | None:
+    rows = reader.query(
+        """SELECT b.bin_id, b.bin_code, z.zone_name, z.warehouse_id, w.name AS warehouse_name
+           FROM bin b
+           JOIN zone z ON z.zone_id = b.zone_id
+           JOIN warehouse w ON w.warehouse_id = z.warehouse_id
+           WHERE b.bin_id = %s""",
+        (bin_id,),
+    )
+    return rows[0] if rows else None
+
+
+def product_row(reader: Database | Transaction, product_id: int) -> Row | None:
+    rows = reader.query("SELECT product_id, sku, name FROM product WHERE product_id = %s", (product_id,))
+    return rows[0] if rows else None
+
+
+def warehouse_name(reader: Database | Transaction, warehouse_id: int) -> str:
+    rows = reader.query("SELECT name FROM warehouse WHERE warehouse_id = %s", (warehouse_id,))
+    return str(rows[0]["name"]) if rows else f"warehouse {warehouse_id}"
+
+
+_HEADER_SQL: dict[str, str] = {
+    "receipt": """
+        SELECT r.receipt_id, r.warehouse_id, w.name AS warehouse_name
+        FROM receipt r JOIN warehouse w ON w.warehouse_id = r.warehouse_id
+        WHERE r.receipt_id = %s""",
+    "dispatch": """
+        SELECT d.dispatch_id, d.warehouse_id, w.name AS warehouse_name
+        FROM dispatch d JOIN warehouse w ON w.warehouse_id = d.warehouse_id
+        WHERE d.dispatch_id = %s""",
+    "transfer": """
+        SELECT t.transfer_id, t.status, t.transfer_date,
+               t.source_warehouse_id, sw.name AS source_warehouse,
+               t.dest_warehouse_id, dw.name AS dest_warehouse
+        FROM transfer t
+        JOIN warehouse sw ON sw.warehouse_id = t.source_warehouse_id
+        JOIN warehouse dw ON dw.warehouse_id = t.dest_warehouse_id
+        WHERE t.transfer_id = %s""",
+}
+
+
+def header_row(reader: Database | Transaction, table: str, header_id: int) -> Row | None:
+    rows = reader.query(_HEADER_SQL[table], (header_id,))
+    return rows[0] if rows else None
+
+
+def stock_in_warehouse(reader: Database | Transaction, warehouse_id: int) -> list[Row]:
+    """Bin/product balances with stock in one warehouse, with quantities reserved by PENDING transfers."""
+    return reader.query(
+        f"""SELECT s.bin_id, s.bin_code, s.product_id, s.sku, s.product_name, s.on_hand,
+                   COALESCE(r.reserved, 0) AS reserved,
+                   s.on_hand - COALESCE(r.reserved, 0) AS available
+            FROM v_bin_stock s
+            LEFT JOIN ({_RESERVED_SUBQUERY}) r
+                   ON r.bin_id = s.bin_id AND r.product_id = s.product_id
+            WHERE s.warehouse_id = %s AND s.on_hand > 0
+            ORDER BY s.bin_code, s.sku""",
+        (warehouse_id,),
+    )
+
+
+def open_transfers(reader: Database | Transaction) -> list[Row]:
+    return reader.query(
+        """SELECT t.transfer_id, t.status, t.transfer_date,
+                  t.source_warehouse_id, sw.name AS source_warehouse,
+                  t.dest_warehouse_id, dw.name AS dest_warehouse,
+                  COUNT(tl.product_id) AS line_count,
+                  COALESCE(SUM(tl.quantity), 0) AS units,
+                  COALESCE(SUM(tl.product_id IS NOT NULL AND tl.dest_bin_id IS NULL), 0) AS unassigned
+           FROM transfer t
+           JOIN warehouse sw ON sw.warehouse_id = t.source_warehouse_id
+           JOIN warehouse dw ON dw.warehouse_id = t.dest_warehouse_id
+           LEFT JOIN transfer_line tl ON tl.transfer_id = t.transfer_id
+           WHERE t.status IN ('PENDING', 'IN_TRANSIT')
+           GROUP BY t.transfer_id, t.status, t.transfer_date, t.source_warehouse_id, sw.name,
+                    t.dest_warehouse_id, dw.name
+           ORDER BY t.transfer_id"""
+    )
+
+
+def transfer_lines(reader: Database | Transaction, transfer_id: int) -> list[Row]:
+    return reader.query(
+        """SELECT tl.transfer_id, tl.source_bin_id, sb.bin_code AS source_bin_code,
+                  tl.product_id, p.sku, p.name AS product_name, tl.quantity,
+                  tl.dest_bin_id, xb.bin_code AS dest_bin_code
+           FROM transfer_line tl
+           JOIN bin sb ON sb.bin_id = tl.source_bin_id
+           LEFT JOIN bin xb ON xb.bin_id = tl.dest_bin_id
+           JOIN product p ON p.product_id = tl.product_id
+           WHERE tl.transfer_id = %s
+           ORDER BY sb.bin_code, p.sku""",
+        (transfer_id,),
+    )
+
+
+def _like(text: str) -> str:
+    escaped = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
+def search_bins(db: Database, text: str, warehouse_id: int | None, include_empty: bool) -> list[Row]:
+    """Bins and their contents matching text in bin code, zone, SKU or product name."""
+    pattern = _like(text.strip())
+    return db.query(
+        f"""SELECT w.warehouse_id, w.name AS warehouse_name, z.zone_name, b.bin_id, b.bin_code,
+                   s.product_id, s.sku, s.product_name, s.on_hand,
+                   CASE WHEN s.product_id IS NULL THEN NULL ELSE COALESCE(r.reserved, 0) END AS reserved,
+                   CASE WHEN s.product_id IS NULL THEN NULL
+                        ELSE s.on_hand - COALESCE(r.reserved, 0) END AS available
+            FROM bin b
+            JOIN zone z ON z.zone_id = b.zone_id
+            JOIN warehouse w ON w.warehouse_id = z.warehouse_id
+            LEFT JOIN v_bin_stock s ON s.bin_id = b.bin_id AND s.on_hand <> 0
+            LEFT JOIN ({_RESERVED_SUBQUERY}) r
+                   ON r.bin_id = s.bin_id AND r.product_id = s.product_id
+            WHERE (%s = 0 OR w.warehouse_id = %s)
+              AND (b.bin_code LIKE %s OR z.zone_name LIKE %s OR s.sku LIKE %s OR s.product_name LIKE %s)
+              AND (%s = 1 OR s.product_id IS NOT NULL)
+            ORDER BY w.name, b.bin_code, s.sku""",
+        (warehouse_id or 0, warehouse_id or 0, pattern, pattern, pattern, pattern, int(include_empty)),
+    )
 
 
 def delete_rows(db: Database, spec: TableSpec, keys: Sequence[tuple[Any, ...]]) -> int:

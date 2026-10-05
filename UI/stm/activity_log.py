@@ -1,14 +1,15 @@
-"""Bottom panel listing every write statement the app sends, with its outcome."""
+"""Panel listing every write statement the app sends, with its outcome."""
 from __future__ import annotations
 
 import html
 from datetime import date
 from typing import Any
 
-from PySide6.QtWidgets import QDockWidget, QPlainTextEdit, QWidget
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QPlainTextEdit, QVBoxLayout, QWidget
 
 from stm import theme
 from stm.db import StatementRecord
+from stm.widgets import button, label
 
 _MUTED = "#6B7680"
 _ERROR = "#A33A3A"
@@ -26,18 +27,35 @@ def _format_param(value: Any) -> str:
     return str(value)
 
 
-class ActivityLog(QDockWidget):
+class ActivityLog(QFrame):
     def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__("SQL activity", parent)
-        self.setObjectName("ActivityDock")
-        self.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetClosable)
+        super().__init__(parent)
+        self.setObjectName("ActivityPanel")
         self._text = QPlainTextEdit()
         self._text.setObjectName("ActivityLog")
         self._text.setReadOnly(True)
         self._text.setFont(theme.mono_font(9))
         self._text.setMaximumBlockCount(2000)
-        self._text.setPlaceholderText("Statements sent by inserts and deletes appear here.")
-        self.setWidget(self._text)
+        self._text.setPlaceholderText("Statements sent by inserts, deletes and workflows appear here.")
+        clear = button("Clear", "flat")
+        clear.clicked.connect(self._text.clear)
+
+        bar = QWidget()
+        bar.setObjectName("ActivityBar")
+        bar_layout = QHBoxLayout(bar)
+        bar_layout.setContentsMargins(12, 3, 8, 3)
+        bar_layout.addWidget(label("SQL activity", "panelTitle"))
+        bar_layout.addStretch(1)
+        bar_layout.addWidget(clear)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(bar)
+        layout.addWidget(self._text, 1)
+
+    def text(self) -> str:
+        return self._text.toPlainText()
 
     def record(self, entry: StatementRecord) -> None:
         stamp = f'<span style="color:{_MUTED}">{entry.at:%H:%M:%S}</span>&nbsp;&nbsp;'

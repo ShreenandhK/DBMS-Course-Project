@@ -105,5 +105,23 @@ class ErrorDialog(_Dialog):
         self.add_buttons(close)
 
 
+class QuestionDialog(_Dialog):
+    def __init__(self, title: str, question: str, confirm_text: str, parent: QWidget | None = None) -> None:
+        super().__init__(title, parent)
+        self.add_text(question)
+        keep = button("Keep")
+        confirm = button(confirm_text, "dangerSolid")
+        keep.clicked.connect(self.reject)
+        confirm.clicked.connect(self.accept)
+        self.add_buttons(keep, confirm)
+        keep.setDefault(True)
+        keep.setFocus()
+
+
 def show_error(parent: QWidget | None, title: str, message: str, detail: str = "") -> None:
     ErrorDialog(title, message, detail, parent).exec()
+
+
+def ask(parent: QWidget | None, title: str, question: str, confirm_text: str) -> bool:
+    """Ask before a destructive step; the safe choice is the default button."""
+    return QuestionDialog(title, question, confirm_text, parent).exec() == QDialog.DialogCode.Accepted

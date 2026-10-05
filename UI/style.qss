@@ -95,6 +95,19 @@ QLabel[role="detail"] {
     color: #6B7680;
 }
 
+QWidget#WorkflowBody {
+    background: #F4F5F7;
+}
+QScrollArea#WorkflowScroll {
+    background: #F4F5F7;
+    border: none;
+}
+QFrame#Section {
+    background: #FFFFFF;
+    border: 1px solid #DCE0E4;
+    border-radius: 3px;
+}
+
 QFrame#RecordList {
     background: #FFFFFF;
     border: 1px solid #DCE0E4;
@@ -339,15 +352,33 @@ QStatusBar QLabel {
     padding: 0 6px;
 }
 
-QDockWidget {
-    titlebar-close-icon: none;
-}
-QDockWidget::title {
-    background: #F7F8FA;
+QFrame#ActivityPanel {
+    background: #FBFBFC;
     border-top: 1px solid #D9DDE2;
+}
+QWidget#ActivityBar {
+    background: #F7F8FA;
     border-bottom: 1px solid #E3E6EA;
-    padding: 4px 10px;
-    text-align: left;
+}
+QLabel[role="panelTitle"] {
+    color: #4A5560;
+    font-size: 9pt;
+    font-weight: 600;
+}
+QPushButton[variant="flat"] {
+    background: transparent;
+    border: 1px solid transparent;
+    color: #4A5560;
+    padding: 1px 8px;
+    min-height: 16px;
+}
+QPushButton[variant="flat"]:hover {
+    background: #EBEEF1;
+    border-color: #D9DDE2;
+}
+QSplitter::handle:vertical {
+    background: #D9DDE2;
+    height: 1px;
 }
 QPlainTextEdit#ActivityLog {
     background: #FBFBFC;

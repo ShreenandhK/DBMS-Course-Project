@@ -225,7 +225,7 @@ RECEIPT = TableSpec(
     name="receipt",
     title="Receipts",
     singular="receipt",
-    group="Inbound",
+    group="Movements",
     primary_key=("receipt_id",),
     auto_key=True,
     grid=(
@@ -246,7 +246,7 @@ RECEIPT_LINE = TableSpec(
     name="receipt_line",
     title="Receipt lines",
     singular="receipt line",
-    group="Inbound",
+    group="Movements",
     primary_key=("receipt_id", "bin_id", "product_id"),
     grid=(
         GridColumn("receipt_id", "Receipt", ID),
@@ -268,7 +268,7 @@ TRANSFER = TableSpec(
     name="transfer",
     title="Transfers",
     singular="transfer",
-    group="Transfers",
+    group="Movements",
     primary_key=("transfer_id",),
     auto_key=True,
     grid=(
@@ -296,7 +296,7 @@ TRANSFER_LINE = TableSpec(
     name="transfer_line",
     title="Transfer lines",
     singular="transfer line",
-    group="Transfers",
+    group="Movements",
     primary_key=("transfer_id", "source_bin_id", "product_id"),
     grid=(
         GridColumn("transfer_id", "Transfer", ID),
@@ -330,7 +330,7 @@ DISPATCH = TableSpec(
     name="dispatch",
     title="Dispatches",
     singular="dispatch",
-    group="Outbound",
+    group="Movements",
     primary_key=("dispatch_id",),
     auto_key=True,
     grid=(
@@ -351,7 +351,7 @@ DISPATCH_LINE = TableSpec(
     name="dispatch_line",
     title="Dispatch lines",
     singular="dispatch line",
-    group="Outbound",
+    group="Movements",
     primary_key=("dispatch_id", "bin_id", "product_id"),
     grid=(
         GridColumn("dispatch_id", "Dispatch", ID),
@@ -431,7 +431,7 @@ TABLES: tuple[TableSpec, ...] = (
     SUPPLIER,
 )
 
-GROUP_ORDER: tuple[str, ...] = ("Stock", "Inbound", "Transfers", "Outbound", "Locations", "Master data")
+GROUP_ORDER: tuple[str, ...] = ("Stock", "Movements", "Locations", "Master data")
 
 BY_NAME: dict[str, TableSpec] = {spec.name: spec for spec in TABLES}
 

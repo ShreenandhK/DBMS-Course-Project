@@ -42,7 +42,7 @@ Manager.
 
 | Area | What it does |
 |---|---|
-| Sidebar | All 12 tables and the **Bin stock** view, grouped by area, with live row counts |
+| Sidebar | Operations (workflows), then all 12 tables and the **Bin stock** view, grouped by area, with live row counts |
 | Grid | Click a header to sort (third click restores database order). Foreign keys show names, codes and SKUs instead of IDs |
 | Filter | Text filter over all columns or one chosen column; the status bar shows `visible of total` rows |
 | New | Form generated from the table definition. Foreign keys are dropdowns; inputs are checked before anything is sent |
@@ -51,6 +51,34 @@ Manager.
 
 Reads run in autocommit mode, so **Refresh** always shows changes made from other clients such
 as the MySQL command line.
+
+### Operations (workflows)
+
+| Page | What it writes |
+|---|---|
+| Receive stock | One `receipt` and its `receipt_line` rows (put-away into bins of the receiving warehouse), in one transaction |
+| New transfer | A PENDING `transfer` and its `transfer_line` rows, picked from stock in the source warehouse |
+| Process transfers | Mark in transit (`status` → IN_TRANSIT), save put-away bins (`dest_bin_id`), confirm (bins + `status` → CONFIRMED in one transaction) or cancel |
+| Dispatch stock | One `dispatch` and its `dispatch_line` rows, picked from stock in that warehouse |
+| Record damage | One `damaged` row; the units leave usable stock |
+| Bin search | Read only: bins and their contents by bin code, zone, SKU or product, with reserved and available quantities |
+
+### Business rules checked by the application
+
+The database enforces keys, foreign keys, CHECK constraints and the confirmation triggers. These
+rules are not in the schema, so the application checks them before writing (in the workflows and
+in the insert forms of the table pages):
+
+| Rule | Example message |
+|---|---|
+| A bin on a receipt, transfer or dispatch belongs to that document's warehouse (destination bins to the destination warehouse) | "Bin HYD-BS-01 belongs to Hyderabad Central DC, not Pune West Depot." |
+| Transfer and dispatch quantities fit the bin's stock, minus stock reserved by PENDING transfers | "Only 438 of PLB-PVC-025 available in BLR-BS-01 (588 on hand, 150 reserved by pending transfers); 500 requested." |
+| Damage quantity fits the bin's stock | "Only 110 of PNT-WHT-020 on hand in PUN-BS-01; 500 requested." |
+| Transfers only move forward: PENDING → IN_TRANSIT → CONFIRMED, or to CANCELLED; CONFIRMED and CANCELLED are final | "Transfer #1 is CONFIRMED; it cannot change to PENDING. Allowed: none (final state)." |
+| Every line has a destination bin before confirming | "Every line needs a destination bin before the transfer can be confirmed." |
+
+Status changes use `UPDATE transfer SET status = ? WHERE transfer_id = ? AND status = ?`, so a
+transfer changed by someone else in the meantime is reported instead of overwritten.
 
 ### Keyboard
 
@@ -86,17 +114,21 @@ UI/
 └── stm/
     ├── db.py            connection, every SQL statement, transactions, error translation
     ├── schema.py        table definitions: grid columns, form fields, keys (no SQL)
+    ├── operations.py    workflows and the business rules the schema does not enforce (no SQL)
     ├── credentials.py   remembered login (Credential Manager + registry)
     ├── login_dialog.py  startup connection dialog
     ├── main_window.py   sidebar, pages, menus, shortcuts, status bar
     ├── sidebar.py       grouped navigation with row counts
+    ├── page.py          base class and header shared by all pages
     ├── table_page.py    grid, filter, New / Delete / Refresh for one table
+    ├── grid.py          sortable, filterable data grid
     ├── table_model.py   grid model, sort/filter proxy, status chips
     ├── record_dialog.py generated insert form with inline validation
-    ├── dialogs.py       delete confirmation and error dialogs
+    ├── dialogs.py       confirmation and error dialogs
     ├── activity_log.py  SQL activity panel
     ├── widgets.py       small shared widget helpers
-    └── theme.py         fonts and painted colours
+    ├── theme.py         fonts and painted colours
+    └── workflows/       receive, new transfer, process transfers, dispatch, damage, bin search
 ```
 
 ## Demo script
@@ -158,11 +190,29 @@ mysql --login-path=local stock_transfer_db
    **Del**. The dialog says it also deletes 3 zones and 7 bins (ON DELETE CASCADE). Press
    **Cancel**.
 
+### 4. Workflows (optional, if time allows)
+
+1. **Bin search**: type `pvc`. BLR-BS-01 shows 588 on hand, 150 reserved (pending transfer #3),
+   438 available.
+2. **New transfer**: From `Hyderabad Central DC`, To `Bengaluru East Hub`. Pick
+   `HYD-BS-01  ELE-LED-009 … 726 available`, Quantity `800`, **Add line**: refused, only 726
+   available. Change to `100`, **Add line**, **Create transfer**. The status bar reads
+   `Created transfer #4 (PENDING) …`.
+3. **Process transfers**: select transfer 4. **Confirm receipt** with no destination bin is
+   refused. **Mark in transit**: Bin stock now shows HYD-BS-01 at 626 (the 100 units are in no
+   bin). Select transfer 4 again, choose destination `BLR-BS-03`, **Confirm receipt**: Bin stock
+   shows BLR-BS-03 with 100. The SQL panel shows the `UPDATE transfer_line` and
+   `UPDATE transfer ... WHERE ... AND status = 'IN_TRANSIT'` in one transaction.
+4. To undo: **Transfers** → select transfer 4 → **Del** → **Delete** (its line is removed by
+   ON DELETE CASCADE), then reset the counter as below.
+
 ### After the demo
 
 InnoDB never reuses an auto-increment value, so after inserting and deleting the supplier the
-next new supplier would get ID 6. To put the counter back to its previous value:
+next new supplier would get ID 6. To put the counters back to their previous values (each only
+takes effect if no higher ID exists):
 
 ```sql
 ALTER TABLE supplier AUTO_INCREMENT = 5;
+ALTER TABLE transfer AUTO_INCREMENT = 4;
 ```
